@@ -6,34 +6,100 @@
 # See comprehensive documentation on the github repository
 # https://github.com/jacobbeierle/JABS_nextflow_postprocess/tree/main
 
-library(optparse)
-
 # ======================
 # Set up / Libraries / Options
 # ======================
-library(tidyverse)
+
+renv::settings$external.libraries(
+  file.path(Sys.getenv("CONDA_PREFIX"), "lib/R/library")
+)
+renv::hydrate()
+
+suppressPackageStartupMessages({
+  library(optparse)
+  library(yaml)
+  library(tidyverse)
+  library(writexl)
+})
 
 # =======================
-# Set QC and other Values
+# Argument Parser
 # ======================
 
-# Set the QC values you will use to screen the Nextflow QC files
-expected.length<- 60*60*30 + 5*30     # Video clipping duration plus 5 seconds)
-max.tracklets.per.hour <- 6
-# Max frames (as percent of all frames) missing pose
-max.percent.segmentation.missing <- 0.2
-# Max percentage of Frames missing pose
-max.percent.pose.missing <- 0.005
-# Max percentage of Frames missing pose
-max.percent.kp.missing <- 0.01
-# Proportion of Highest and lowest fecal boli mice to plot separately for QC
-fecal_boli_percent_threshold <- 0.05
+option_list <- list(
+  make_option("--input_dir", type = "character", help = "Input directory (required)"),
+  make_option("--output_dir", type = "character", help = "Output directory (required)"),
+  make_option("--param", type = "character", default = NULL,
+              help = "Optional YAML config file to override defaults"),
+  
+  # QC parameters with defaults
+  make_option("--expected_length", type = "integer", default = 60*60*30 + 5*30,
+              help = "Expected video length in seconds [default %default]"),
+  make_option("--max_tracklet_per_hour", type = "integer", default = 6,
+              help = "Maximum tracklets per hour [default %default]"),
+  make_option("--max_missing_pose", type = "double", default = 0.005,
+              help = "Maximum fraction of missing pose [default %default]"),
+  make_option("--max_missing_segmentation", type = "double", default = 0.2,
+              help = "Maximum fraction of missing segmentation [default %default]"),
+  make_option("--max_missing_keypoint", type = "double", default = 0.01,
+              help = "Maximum fraction of missing keypoints [default %default]"),
+  make_option("--fecal_boli_quantile_plotting", type = "double", default = 0.05,
+              help = "Quantile for fecal boli plotting [default %default]")
+)
+
+opt_parser <- OptionParser(option_list = option_list,
+                           description = "QC Reporting Pipeline")
+
+# Parse command-line arguments
+args <- parse_args(opt_parser)
+
+# =======================
+# Merge parameter priorites
+# ======================
+
+# Set input, output directories
+input.dir <- args$input_dir
+output.dir <- args$output_dir
+
+# Set defaults
+params <- list(
+  expected_length = args$expected_length,
+  max_tracklet_per_hour = args$max_tracklet_per_hour,
+  max_missing_pose = args$max_missing_pose,
+  max_missing_segmentation = args$max_missing_segmentation,
+  max_missing_keypoint = args$max_missing_keypoint,
+  fecal_boli_quantile_plotting = args$fecal_boli_quantile_plotting
+)
+
+# Override with YAML (if provided)
+if (!is.null(args$param)) {
+  yaml_vals <- yaml::read_yaml(args$param)
+  params <- modifyList(params, yaml_vals)
+}
+
+# Print final configuration
+cat("=== QC CONFIGURATION ===\n")
+cat("Input directory: ", args$input_dir, "\n")
+cat("Output directory:", args$output_dir, "\n")
+cat("QC Parameters:\n")
+print(params)
+
+# # Set the QC values you will use to screen the Nextflow QC files
+# expected.length<- 60*60*30 + 5*30     # Video clipping duration plus 5 seconds)
+# max.tracklets.per.hour <- 6
+# # Max frames (as percent of all frames) missing pose
+# max.percent.segmentation.missing <- 0.2
+# # Max percentage of Frames missing pose
+# max.percent.pose.missing <- 0.005
+# # Max percentage of Frames missing pose
+# max.percent.kp.missing <- 0.01
+# # Proportion of Highest and lowest fecal boli mice to plot separately for QC
+# fecal_boli_percent_threshold <- 0.05
 
 # ==================
 # Create output directories
 # ==================
-# Set output directory
-output.dir <- "/projects/kumar-lab/USERS/nguyetu/SING-grant/Nextflow_postprocess"
+
 for (subdirectory in c("final_nextflow_feature_data",
                        "qc/nextflow_qc_logs",
                        "qc/missing_or_dup_data",
@@ -52,15 +118,15 @@ qc_log <- list.files(
               full.names = TRUE,
               recursive = TRUE
               ) %>%
-          read_csv(id = "QC_file")
+          read_csv(id = "QC_file", show_col_types = FALSE)
 
 # Record why QC failed for each video
 qc_log <- qc_log %>%
-  mutate(passed_duration_QC = video_duration == expected.length,
-         passed_tracklet_QC = pose_tracklets < max.tracklets.per.hour * expected.length / 108000,
-         passed_segmentation_QC = seg_counts > (1 - max.percent.segmentation.missing) * expected.length,
-         passed_pose_QC = pose_counts > (1 - max.percent.kp.missing) * expected.length,
-         passed_kp_QC = missing_keypoint_frames < max.percent.kp.missing * expected.length)
+  mutate(passed_duration_QC = video_duration == params$expected_length,
+         passed_tracklet_QC = pose_tracklets < params$max_tracklet_per_hour * params$expected_length / 108000,
+         passed_segmentation_QC = seg_counts > (1 - params$max_missing_segmentation) * params$expected_length,
+         passed_pose_QC = pose_counts > (1 - params$max_missing_pose) * params$expected_length,
+         passed_kp_QC = missing_keypoint_frames < params$max_missing_keypoint * params$expected_length)
 
 # Apply thresholds defined above to create a separate 'failed QC' data frame
 qc_log.failed <- qc_log %>%
@@ -121,13 +187,14 @@ read_raw_data <- function(input_dir, pattern) {
   return(raw_data)
 }
 
-check_missing_and_dup <- function(expected_videos, data_df) {
+check_missing_and_dup <- function(expected_videos, data_df, corr_thres = 0.99) {
   ##########################################################################
   # Check for missing videos and duplicated rows in a dataset
   #
   # Args:
   #   expected_videos: character vector of expected NetworkFilename values
   #   data_df: dataframe containing a NetworkFilename column and data
+  #   corr_thres: a number for how much correlated 2 rows are to be flagged
   #
   # Returns:
   #   A list with three elements:
@@ -141,15 +208,27 @@ check_missing_and_dup <- function(expected_videos, data_df) {
   #   - Rounds numeric columns before checking for duplicates to account for minor differences
   ##########################################################################
   
-  video_missing_in_qc <- setdiff(expected_videos, data_df$NetworkFilename)
-  video_missing_output <- setdiff(data_df$NetworkFilename, expected_videos)
+  video_missing_output <- setdiff(expected_videos, data_df$NetworkFilename)
+  video_missing_in_qc <- setdiff(data_df$NetworkFilename, expected_videos)
   
   # Check for rows with identical data (i.e. something went wrong in video recording)
-  # I remove the network file name col because data may have been mislabeled
-  duplicated_rows <- data_df %>%
-    mutate(across(where(is.numeric), ~ round(.x, digits = 0))) %>%
-    filter(duplicated(across(-1)) | duplicated(across(-1), fromLast = T))
-
+  dup_idx <- which(duplicated(data_df[, -1]) | duplicated(data_df[, -1], fromLast = TRUE))
+  
+  # Check for rows with high correlation 
+  corr_mat <- data_df %>% 
+    dplyr::select(where(is.numeric)) %>%
+    scale() %>% t() %>%
+    cor(use = "pairwise.complete.obs")
+  
+  # correlated row pairs above threshold
+  row_pairs <- which(corr_mat > corr_thres & row(corr_mat) != col(corr_mat), arr.ind = TRUE)
+  cor_idx <- unique(c(row_pairs[,1], row_pairs[,2]))
+  
+  # UNION: rows that are duplicated OR highly correlated
+  all_idx <- sort(unique(c(dup_idx, cor_idx)))
+  
+  duplicated_rows <- data_df[all_idx,] 
+  
   return(list(missing_qc = video_missing_in_qc,
               missing_output = video_missing_output,
               dup_data = duplicated_rows))
@@ -161,6 +240,7 @@ check_missing_and_dup <- function(expected_videos, data_df) {
 # Concatenate all instances
 fecal_boli.raw <- read_raw_data(input_dir = "~/kumar-group/SING-grant/NextflowOutput/",
                                 pattern = "fecal_boli.csv")
+
 # Check for missing and duplicated data
 fecal_boli.summary <- check_missing_and_dup(expected_videos = expected_videos,
                                             data_df = fecal_boli.raw)
@@ -170,11 +250,10 @@ write.csv(fecal_boli.raw, file.path(output.dir, "final_nextflow_feature_data/fec
 # ================
 # Fecal boli QC plots
 # ================
-
 # Pivot longer to facilitate plotting for QC
 fecal_boli.plot <- fecal_boli.raw |> 
   pivot_longer(
-    cols = !NetworkFilename,
+    cols = !c(NetworkFilename, nextflow_version),
     names_to = "min", 
     values_to = "fecal_boli",
     values_drop_na = TRUE) |> 
@@ -190,38 +269,38 @@ ggplot(fecal_boli.plot, aes(min, fecal_boli, group = NetworkFilename, colour = N
   labs(title = "Fecal boli growth, all mice") +
   theme(legend.position = "none")
 
-# Plot 10% mice with lowest fecal boli
+# Plot mice with lowest fecal boli
 fecal_boli.plot  |> 
   summarise(across(fecal_boli, max), .by = NetworkFilename) |> 
-  slice_min(fecal_boli, prop = fecal_boli_percent_threshold) |> 
+  slice_min(fecal_boli, prop = params$fecal_boli_quantile_plotting) |> 
   select(NetworkFilename) |> 
   merge(fecal_boli.plot, by.x = "NetworkFilename") |> 
   ggplot(aes(min, fecal_boli, group = NetworkFilename, colour = NetworkFilename))+
     geom_line() +
-    labs(title = paste("Lowest ", fecal_boli_percent_threshold*100, "% of fecal boli mice", sep = "")) +
+    labs(title = paste("Lowest ", params$fecal_boli_quantile_plotting*100, "% of fecal boli mice", sep = "")) +
     theme(legend.position = "none")
 
-# Plot 10% mice with highest fecal boli
+# Plot mice with highest fecal boli
 fecal_boli.plot  |> 
   summarise(across(fecal_boli, max), .by = NetworkFilename) |> 
-  slice_max(fecal_boli, prop = fecal_boli_percent_threshold) |> 
+  slice_max(fecal_boli, prop = params$fecal_boli_quantile_plotting) |> 
   select(NetworkFilename) |> 
   merge(fecal_boli.plot, by.x = "NetworkFilename") |> 
   ggplot(aes(min, fecal_boli, group = NetworkFilename, colour = NetworkFilename))+
     geom_line() +
-    labs(title = paste("Highest ", fecal_boli_percent_threshold*100, "% of fecal boli mice", sep = "")) +
+    labs(title = paste("Highest ", params$fecal_boli_quantile_plotting*100, "% of fecal boli mice", sep = "")) +
     theme(legend.position = "none")
 
 # Histogram of final fecal boli count
 fecal_boli.plot  |> 
   arrange(desc(min)) |> 
   distinct(NetworkFilename, .keep_all = TRUE) |> 
-  ggplot(aes(fecal_boli, ifelse(after_stat(count) > 0, after_stat(count), NA)))+
+  ggplot(aes(fecal_boli))+
     geom_histogram(binwidth = 1, boundary = 0)+
     labs(title = "Fecal boli highest bin, all mice") +
     ylab("count")
 
-dev.off()
+invisible(dev.off())
 
 # ===============
 # Process Gait Data
@@ -265,7 +344,7 @@ JABS.features.summary <- check_missing_and_dup(expected_videos = expected_videos
 write.csv(JABS.features, file.path(output.dir, "final_nextflow_feature_data/JABS_features_final.csv"), row.names = FALSE)
 
 # ====================
-#Process morphometrics feature data
+# Process morphometrics feature data
 # ====================
 morpho.raw <- read_raw_data(input_dir = "~/kumar-group/SING-grant/NextflowOutput/",
                             pattern = "morphometrics.csv")
@@ -275,103 +354,71 @@ morpho.summary <- check_missing_and_dup(expected_videos = expected_videos,
                                         data_df = morpho.raw)
 
 # =================
-# Merge and output all missing data
+# Report and output data for all warnings
 # =================
-# Missing output data (but video is in QC)
+# Videos in QC but not in output
 all_missing_data <- list("fecal_boli" = fecal_boli.summary$missing_output,
                          "gait" = gait.summary$missing_output,
                          "JABS_features" = JABS.features.summary$missing_output,
-                         "morphometrics" = morpho.summary$missing_output) %>%
-  enframe(., name = "outputType", value = "video") %>% 
-  unnest(cols = video)
-# Select the dfs with actual missing data represented, dropping the rest
-publish_missing_data <- NULL
-for(i in seq_along(all_missing_data)){
-  if(length(all_missing_data[[i]]) > 0){
-    if(length(publish_missing_data) == 0){
-      publish_missing_data <- all_missing_data[[i]]
-    } else {publish_missing_data <- full_join(publish_missing_data, all_missing_data[[i]])}
-  }
-}
+                         "Morphometrics" = morpho.summary$missing_output) 
 
-# Fill the csv with something if all QC passes
-if(length(publish_missing_data) == 0){
-  publish_missing_data <- "NO DATA MISSING"
-}
-
-# Write the csv
-write.csv(publish_missing_data, file.path(output.dir, "qc/missing_or_dup_data/missing_data.csv"), row.names = FALSE)
-
-# Publish all vids in some feature csv, but not in the qc dataframe
-# Combine into a single list
-videos_not_in_qc_report <- list(
-  "fecal_boli_videos_missing_in_qc" = fecal_boli_videos_missing_in_qc,
-  "gait_videos_missing_in_qc" = gait_videos_missing_in_qc,
-  "JABS_features_videos_missing_in_qc" = JABS_features_videos_missing_in_qc,
-  "morphometrics_videos_missing_in_qc" = morphometrics_videos_missing_in_qc
-)
-
-# Select the dfs with actual missing data represented, dropping the rest
-publish_videos_not_in_qc_report <- NULL
-for(i in seq_along(videos_not_in_qc_report)){
-  if(length(videos_not_in_qc_report[[i]]) > 0){
-    if(length(publish_videos_not_in_qc_report) == 0){
-      publish_missing_data <- videos_not_in_qc_report[[i]]
-    }else{publish_missing_data <- full_join(publish_missing_data, videos_not_in_qc_report[[i]])}
-  }else{}
-}
-
-# Fill the csv with something if all QC passes
-if(length(publish_videos_not_in_qc_report) == 0){
-  publish_videos_not_in_qc_report <- "NO DATA MISSING"
-}
-
-write.csv(publish_videos_not_in_qc_report, file.path(output.dir, "qc/missing_or_dup_data/videos_not_in_qc_report.csv"), row.names = FALSE)
+# Videos in output but not in QC
+videos_not_in_qc_report <- list("fecal_boli" = fecal_boli.summary$missing_qc,
+                                "gait" = gait.summary$missing_qc,
+                                "JABS_features" = JABS.features.summary$missing_qc,
+                                "morphometrics" = morpho.summary$missing_qc)
 
 # Output data that is duplicated in the data frames
-duplicated_data <- list(
-  "dup_gait" = duplicate_gait_rows,
-  "dup_JABS" = duplicate_JABS_feature_rows,
-  "dup_morpho" = duplicate_morphometrics_rows,
-  "dup_fboli" = duplicate_fboli_rows
-)
+all_duplicated_data <- list("fecal_boli" = fecal_boli.summary$dup_data,
+                            "gait" = gait.summary$dup_data,
+                            "JABS_features" = JABS.features.summary$dup_data,
+                            "morphometrics" = morpho.summary$dup_data)
 
-#If all objecst in the list have a length of 0 (i.e. empty), report no dupli
-if(all(sapply(duplicated_data, function(x) nrow(x)==0))){
-  duplicated_data <- "NO DUPLICATED DATA"
-  write_xlsx(as.data.frame(duplicated_data), path = file.path(qc.missing_dup.dir, "duplicated_data.xlsx"))
-}else{
-  write_xlsx(duplicated_data, path = file.path(output.dir, "qc/missing_or_dup_data/duplicated_data.xlsx"))
-}
+no_missing_output <- all(sapply(all_missing_data, length) == 0)
+no_missing_qc     <- all(sapply(videos_not_in_qc_report, length) == 0)
+no_dups           <- all(sapply(all_duplicated_data, nrow) == 0)
 
-# =========================
-# Write warnings for failed QC
-# =========================
-error.reporting <- NULL
+# Summarize and write warnings
+cat("=== FINAL ERROR REPORT ===\n")
+if (no_missing_output && no_missing_qc && no_dups) {
+  cat("No errors to report\n")
+  # Create placeholder files
+  write.csv("No data missing", file.path(output.dir, "qc/missing_or_dup_data/missing_data.csv"), row.names = FALSE)
+  write.csv("No data missing", file.path(output.dir, "qc/missing_or_dup_data/videos_not_in_qc_report.csv"), row.names = FALSE)
+  write_xlsx(as.data.frame("No duplicated data"), file.path(output.dir, "qc/missing_or_dup_data/duplicated_data.xlsx"), row.names = FALSE)
+} else {
 
-# Report to terminal if data is missing from QC log but in feature tables
-if(!is.character(publish_videos_not_in_qc_report)){
-  if(length(fecal_boli_videos_missing_in_qc)){ error.reporting <- c(error.reporting,"FECAL BOLI DATA PRESENT FOR VIDEOS NOT IN QC LOG") }
-  if(length(gait_videos_missing_in_qc)){ error.reporting <- c(error.reporting,"GAIT DATA PRESENT FOR VIDEOS NOT IN QC LOG") }
-  if(length(JABS_features_videos_missing_in_qc)){ error.reporting <- c(error.reporting,"JABS FEATURE DATA PRESENT FOR VIDEOS NOT IN QC LOG") }
-  if(length(morphometrics_videos_missing_in_qc)){ error.reporting <- c(error.reporting,"YOU ARE MISSING MORPHOMETRIC FEATURE DATA") }
-}
-
-# Report to terminal if data is missing feature tables but in QC log
-if(!is.character(publish_missing_data)){
-  if(length(videos_with_missing_fecal_boli)){error.reporting <- c(error.reporting,"YOU ARE MISSING FECAL BOLI DATA") }
-  if(length(videos_with_JABS_features_missing)){ error.reporting <- c(error.reporting,"YOU ARE MISSING JABS FEATURE DATA") }
-  if(length(videos_with_morphometrics_features_missing)){ error.reporting <- c(error.reporting,"MORPHOMETRIC DATA PRESENT FOR VIDEOS NOT IN QC LOG") }
-}
-
-# Report to terminal if there is duplicated data
-if(!is.character(duplicated_data)){ error.reporting <- c(error.reporting,"YOU HAVE DUPLICATED DATA!") }
-
-
-#Print out all errors after code done running
-if(length(error.reporting) == 0){
-  print("FINAL ERROR REPORT: NO ERRORS TO REPORT")
-}else{
-  print("FINAL ERROR REPORT:", )
-  paste(error.reporting, collapse = "\n")
+  # Check for missing output data
+  if (no_missing_output) {
+    write.csv("No data missing", file.path(output.dir, "qc/missing_or_dup_data/missing_data.csv"), row.names = FALSE)
+  } else {
+    all_missing_data <- all_missing_data %>% 
+      enframe(., name = "outputType", value = "video_path") %>% 
+      unnest(cols = video_path) %>% 
+      mutate(missing = TRUE) %>% 
+      pivot_wider(id_cols = video_path, names_from = outputType, values_from = missing)
+    write.csv(all_missing_data, file.path(output.dir, "qc/missing_or_dup_data/missing_data.csv"), row.names = FALSE)    
+    cat(paste("Missing", colnames(all_missing_data)[-1], "data"), sep = "\n")
+  }
+  
+  # Check for missing QC data
+  if (no_missing_qc) {
+    write.csv("No data missing", file.path(output.dir, "qc/missing_or_dup_data/videos_not_in_qc_report.csv"), row.names = FALSE)
+  } else {
+    videos_not_in_qc_report <- videos_not_in_qc_report %>%
+      enframe(., name = "outputType", value = "video_path") %>% 
+      unnest(cols = video_path) %>% 
+      mutate(missing = TRUE) %>% 
+      pivot_wider(id_cols = video_path, names_from = outputType, values_from = missing)
+    write.csv(videos_not_in_qc_report, file.path(output.dir, "qc/missing_or_dup_data/videos_not_in_qc_report.csv"), row.names = FALSE)    
+    cat(paste("Missing video in QC for", colnames(videos_not_in_qc_report)[-1], "data"), sep = "\n")
+  }
+  
+  # Check for duplicated data
+  if (no_dups) {
+    write_xlsx(as.data.frame("No duplicated data"), file.path(output.dir, "qc/missing_or_dup_data/duplicated_data.xlsx"), row.names = FALSE)
+  } else {
+    write_xlsx(all_duplicated_data, path = file.path(output.dir, "qc/missing_or_dup_data/duplicated_data.xlsx"))
+    cat(paste("Duplicated data for", names(all_duplicated_data)[sapply(all_duplicated_data, nrow) != 0]), sep = "\n")
+  }
 }
