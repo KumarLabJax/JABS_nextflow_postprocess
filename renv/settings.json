@@ -1,8 +1,6 @@
 {
   "bioconductor.version": null,
-  "external.libraries": [
-    "/home/nguyetu/miniforge3/envs/postNextflow/lib/R/library"
-  ],
+  "external.libraries": [],
   "ignored.packages": [],
   "package.dependency.fields": [
     "Imports",

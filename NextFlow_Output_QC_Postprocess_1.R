@@ -17,12 +17,9 @@ library(writexl)
 # Argument Configuration
 # ======================
 
-input.dir <- ""
-output_dir <- ""
-
 # Set your paths here:
 input.dir <- "~/kumar-group/SING-grant/NextflowOutput/"
-output.dir <- "~/your/output/directory/"  # CHANGE THIS!
+output.dir <- "~/kumar-group/SING-grant/Nextflow_postprocess"
 
 # Set your parameters here:
 params <- list(
@@ -37,20 +34,6 @@ params <- list(
 # Optional: Override with YAML file (uncomment if you want to use this)
 # yaml_vals <- yaml::read_yaml("path/to/your/config.yaml")
 # params <- modifyList(params, yaml_vals)
-
-# Set input, output directories
-input.dir <- args$input_dir
-output.dir <- args$output_dir
-
-# Set defaults
-params <- list(
-  expected_length = args$expected_length,
-  max_tracklet_per_hour = args$max_tracklet_per_hour,
-  max_missing_pose = args$max_missing_pose,
-  max_missing_segmentation = args$max_missing_segmentation,
-  max_missing_keypoint = args$max_missing_keypoint,
-  fecal_boli_quantile_plotting = args$fecal_boli_quantile_plotting
-)
 
 # Print final configuration
 cat("=== QC CONFIGURATION ===\n")
