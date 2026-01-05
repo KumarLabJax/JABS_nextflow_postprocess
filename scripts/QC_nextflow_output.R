@@ -1,5 +1,6 @@
 #!/usr/bin/env Rscript
 # A script to clean NextFlow outputs for final processing
+# The same as "NextFlow_Output_QC_Postprocess_1.R" but to be run in a script
 # Developed by Dr. Jake Beierle (don't forget the Dr., it's important)
 
 # ----Documentation----
@@ -10,33 +11,47 @@
 # Set up / Libraries / Options
 # ======================
 
-library(tidyverse)
-library(writexl)
+suppressPackageStartupMessages({
+  library(optparse)
+  library(yaml)
+  library(tidyverse)
+  library(writexl)
+})
 
 # =======================
-# Argument Configuration
+# Argument Parser
 # ======================
 
-input.dir <- ""
-output_dir <- ""
-
-# Set your paths here:
-input.dir <- "~/kumar-group/SING-grant/NextflowOutput/"
-output.dir <- "~/your/output/directory/"  # CHANGE THIS!
-
-# Set your parameters here:
-params <- list(
-  expected_length = 60*60*30 + 5*30,  
-  max_tracklet_per_hour = 6,
-  max_missing_pose = 0.005,
-  max_missing_segmentation = 0.2,
-  max_missing_keypoint = 0.01,
-  fecal_boli_quantile_plotting = 0.05
+option_list <- list(
+  make_option("--input_dir", type = "character", help = "Input directory (required)"),
+  make_option("--output_dir", type = "character", help = "Output directory (required)"),
+  make_option("--param", type = "character", default = NULL,
+              help = "Optional YAML config file to override defaults"),
+  
+  # QC parameters with defaults
+  make_option("--expected_length", type = "integer", default = 60*60*30 + 5*30,
+              help = "Expected video length in seconds [default %default]"),
+  make_option("--max_tracklet_per_hour", type = "integer", default = 6,
+              help = "Maximum tracklets per hour [default %default]"),
+  make_option("--max_missing_pose", type = "double", default = 0.005,
+              help = "Maximum fraction of missing pose [default %default]"),
+  make_option("--max_missing_segmentation", type = "double", default = 0.2,
+              help = "Maximum fraction of missing segmentation [default %default]"),
+  make_option("--max_missing_keypoint", type = "double", default = 0.01,
+              help = "Maximum fraction of missing keypoints [default %default]"),
+  make_option("--fecal_boli_quantile_plotting", type = "double", default = 0.05,
+              help = "Quantile for fecal boli plotting [default %default]")
 )
 
-# Optional: Override with YAML file (uncomment if you want to use this)
-# yaml_vals <- yaml::read_yaml("path/to/your/config.yaml")
-# params <- modifyList(params, yaml_vals)
+opt_parser <- OptionParser(option_list = option_list,
+                           description = "QC Reporting Pipeline")
+
+# Parse command-line arguments
+args <- parse_args(opt_parser)
+
+# =======================
+# Merge parameter priorites
+# ======================
 
 # Set input, output directories
 input.dir <- args$input_dir
@@ -51,6 +66,12 @@ params <- list(
   max_missing_keypoint = args$max_missing_keypoint,
   fecal_boli_quantile_plotting = args$fecal_boli_quantile_plotting
 )
+
+# Override with YAML (if provided)
+if (!is.null(args$param)) {
+  yaml_vals <- yaml::read_yaml(args$param)
+  params <- modifyList(params, yaml_vals)
+}
 
 # Print final configuration
 cat("=== QC CONFIGURATION ===\n")
