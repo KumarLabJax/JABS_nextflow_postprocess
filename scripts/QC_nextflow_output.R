@@ -49,6 +49,12 @@ opt_parser <- OptionParser(option_list = option_list,
 # Parse command-line arguments
 args <- parse_args(opt_parser)
 
+# Check for required arguments
+if (is.null(opt$input_dir) || is.null(opt$output_dir)) {
+  print_help(parser)
+  stop("Both --input_dir and --output_dir are required.", call. = FALSE)
+}
+
 # =======================
 # Merge parameter priorites
 # ======================
