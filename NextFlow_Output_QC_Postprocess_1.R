@@ -19,7 +19,7 @@ library(writexl)
 
 # Set your paths here:
 input.dir <- "~/kumar-group/SING-grant/NextflowOutput/"
-output.dir <- "~/kumar-group/SING-grant/Nextflow_postprocess"
+output.dir <- "~/kumar-group/SING-grant/postNextflow"
 
 # Set your parameters here:
 params <- list(
@@ -58,13 +58,15 @@ for (subdirectory in c("final_nextflow_feature_data",
 # Process and Publish QC logs with success or failure annotated in a CSV
 # ================
 # Read QC files in NextFlow_Output directory
-qc_log <- list.files(
-              path = "~/kumar-group/SING-grant/NextflowOutput/",
-              pattern = "qc_batch_",
-              full.names = TRUE,
-              recursive = TRUE
-              ) %>%
-          read_csv(id = "QC_file", show_col_types = FALSE)
+qc_files <- list.files(
+  path = input.dir,
+  pattern = "qc_batch_",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+qc_log <- qc_files %>%
+  map_dfr(~ read_csv(.x, show_col_types = FALSE))
 
 # Record why QC failed for each video
 qc_log <- qc_log %>%
@@ -113,7 +115,7 @@ read_raw_data <- function(input_dir, pattern) {
   # Read in data from multiple csv files of the same patterns
   raw_data <- list.files(path = input_dir, pattern = pattern,
                          recursive = T, full.names = T) |>
-    read_csv(show_col_types = FALSE)
+    map_dfr(~ read_csv(.x, show_col_types = FALSE))
   
   # Use NetworkFilename as the ID column (move it to the first column if not already so)
   if ("NetworkFilename" %in% names(raw_data)) {
@@ -184,7 +186,7 @@ check_missing_and_dup <- function(expected_videos, data_df, corr_thres = 0.99) {
 # Process fecal boli data
 # ==================
 # Concatenate all instances
-fecal_boli.raw <- read_raw_data(input_dir = "~/kumar-group/SING-grant/NextflowOutput/",
+fecal_boli.raw <- read_raw_data(input_dir = input.dir,
                                 pattern = "fecal_boli.csv")
 
 # Check for missing and duplicated data
@@ -279,7 +281,7 @@ write.csv(gait.wide_format, file.path(output.dir, "final_nextflow_feature_data/g
 # =================
 # Process JABS Feature Data
 # =================
-JABS.features <- read_raw_data(input_dir = "~/kumar-group/SING-grant/NextflowOutput/",
+JABS.features <- read_raw_data(input_dir = input.dir,
                                pattern = "features.csv")
 
 # Check for missing data in JABS.features
@@ -292,7 +294,7 @@ write.csv(JABS.features, file.path(output.dir, "final_nextflow_feature_data/JABS
 # ====================
 # Process morphometrics feature data
 # ====================
-morpho.raw <- read_raw_data(input_dir = "~/kumar-group/SING-grant/NextflowOutput/",
+morpho.raw <- read_raw_data(input_dir = input.dir,
                             pattern = "morphometrics.csv")
 
 # Check for missing and duplicated data in morphometric outputs
