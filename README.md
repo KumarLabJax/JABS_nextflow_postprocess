@@ -49,7 +49,7 @@ JABS_nextflow_postprocess/
 └── renv.lock                     R dependencies (managed with renv)
 ```
 
-Step numbers reflect the recommended order. Utilities (`render_pose.R`, `pose_corner_correction.py`, `utils.R`, `src/utils.py`) are not numbered — they are called by other scripts or used on demand.
+Step numbers reflect the recommended order. Utilities (`pose_corner_correction.py`, `utils.R`, `src/utils.py`) are not numbered — they are called by other scripts or used on demand.
 
 ---
 

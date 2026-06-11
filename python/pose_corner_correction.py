@@ -1,3 +1,26 @@
+"""Rescue pose files whose automated arena-corner detection failed.
+
+The JABS pipeline stores arena corner coordinates in each pose H5 file under
+``static_objects/corners``.  When automated detection fails, the video lands in
+a ``failed_corners/`` subdirectory.  A human then re-labels the four corners in
+SLEAP and saves the result as ``manual_corner_correction.slp`` alongside the
+batch.
+
+This script iterates over Nextflow batch directories, finds any
+``manual_corner_correction.slp`` file, and for each annotated video:
+
+1. Copies the corresponding ``_pose_est_v6.h5`` from ``failed_corners/`` to the
+   output directory (decoding URL-encoded ``%20`` spaces in filenames).
+2. Overwrites the ``static_objects/corners`` dataset in the copied H5 file with
+   the manually labelled corner coordinates.
+
+Usage::
+
+    python python/pose_corner_correction.py \\
+        --input_dir /path/to/NextflowOutput \\
+        --output_dir /path/to/pose_v6_dir
+"""
+
 import argparse
 import h5py
 import sleap_io as sio
@@ -6,6 +29,18 @@ import shutil
 
 
 def create_pose_v6(slp_correction, failed_pose_dir, pose_v6_dir):
+    """Copy and correct pose H5 files for one batch.
+
+    Parameters
+    ----------
+    slp_correction : Path
+        SLEAP ``.slp`` file containing one labelled frame per failed video,
+        where the single instance holds the four corrected corner coordinates.
+    failed_pose_dir : Path
+        Directory containing ``*_pose_est_v6.h5`` files that need correction.
+    pose_v6_dir : str or Path
+        Destination directory for the corrected H5 files.
+    """
     labels = sio.load_file(slp_correction)
 
     Path(pose_v6_dir).mkdir(parents=True, exist_ok=True)
