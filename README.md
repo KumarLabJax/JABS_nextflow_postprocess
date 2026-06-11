@@ -6,16 +6,14 @@ Post-processing pipeline for raw single-mouse outputs from the JABS behavioral t
 
 ## Overview
 
-| Script | What it does |
-|--------|-------------|
-| `notebooks/1_check_videos.ipynb` | Browse raw video frames on HPC without downloading. Flags likely-empty videos by motion score. |
-| `r/2_qc_check.R` · `python/2_qc_check.py` | Read all Nextflow outputs across batches, check each video against QC thresholds (length, pose coverage, tracklet count), flag missing and duplicate entries, post-process gait data into wide format, and plot raw fecal boli curves for manual review. |
-| `r/3_combine_batches.R` | Merge the four cleaned feature files (gait, morphometrics, JABS features, fecal boli) with a metadata table. Validates that all videos and mice are accounted for across every file before writing a single merged dataset. |
-| `r/4_outliers.R` | Project-specific template for final dataset curation. Removes zero-variance and manually flagged features, runs z-score outlier detection, and generates diagnostic box plots and scatter plots to catch any remaining problematic mice or phenotypes. |
-| `r/5_heatmap.R` | Plots pairwise phenotype correlation heatmaps across the final dataset. Under active development. |
-| `python/6a_qc_classifiers.py` | For each detected behavior bout in the Nextflow output, samples short video clips at random. Optionally overlays the pose skeleton. Writes one MP4 per clip, organized by behavior label. |
-| `python/6b_qc_viewer.py` | Streamlit app that steps through the clips produced by `6a`. Lets you accept, reject, or skip each clip and saves the verdicts to a CSV for downstream use. |
-| `python/pose_corner_correction.py` | Utility. When automated arena-corner detection fails for a video, a human re-labels the corners in SLEAP. This script copies the affected pose H5 files and patches them with the corrected corner coordinates. |
+| Module | Description | Scripts |
+|--------|-------------|---------|
+| **Video Inspection** | Browse raw video frames on HPC without downloading; flags likely-empty videos by motion score. | `notebooks/1_check_videos.ipynb` |
+| **QC & Validation** | Read all Nextflow outputs, check videos against QC thresholds (length, pose coverage, tracklet count), flag missing/duplicate entries, post-process gait, and plot fecal boli for manual review. | `r/2_qc_check.R`, `r/2_qc_check_cli.R`, `python/2_qc_check.py` |
+| **Data Merging** | Merge the four cleaned feature files (gait, morphometrics, JABS features, fecal boli) with a metadata table; validate that all videos and mice are accounted for across every file. | `r/3_combine_batches.R` |
+| **Outlier Detection & Correlation** | Curate the final dataset: remove zero-variance features, detect z-score outliers, generate diagnostic plots, and produce phenotype correlation heatmaps. | `r/4_outliers.R`, `r/5_heatmap.R` |
+| **Behavior Review** | Sample short video clips at detected behavior bouts (optionally with pose overlay), then step through them in a browser UI to accept or reject each clip. | `python/6a_qc_classifiers.py`, `python/6b_qc_viewer.py` |
+| **Manual Corner to Pose File** | When automated arena-corner detection fails, a human re-labels corners in SLEAP. This script patches the affected pose H5 files with the corrected coordinates. | `python/pose_corner_correction.py` |
 
 ---
 
