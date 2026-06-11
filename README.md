@@ -10,39 +10,29 @@ Both R and Python implementations are maintained in parallel. R scripts are desi
 
 ```
 JABS_nextflow_postprocess/
-├── r/                        R pipeline scripts
-│   ├── 2_qc_check.R          compile QC logs, threshold check, missing/dup detection (interactive)
-│   ├── 2_qc_check_cli.R      same as above, CLI version for automation
-│   ├── 4_combine_batches.R   merge outputs from all batches into unified dataset
-│   ├── 5a_outliers.R         outlier detection and QC figures
-│   ├── 5b_heatmap.R          phenotype correlation heatmaps
-│   └── render_pose.R         utility for rendering pose overlay videos
-├── python/                   Python pipeline scripts
-│   ├── 2_qc_check.py         compile QC logs, threshold check, missing/dup detection (CLI)
+├── r/                          R pipeline scripts
+│   ├── qc_check.R              compile QC logs, threshold check, missing/dup detection (interactive)
+│   ├── qc_check_cli.R          same as above, CLI version for automation
+│   ├── combine_batches.R       merge feature files + metadata into unified dataset
+│   ├── outliers.R              outlier detection and QC figures (project-specific template)
+│   ├── heatmap.R               phenotype correlation heatmaps
+│   ├── render_pose.R           utility for rendering pose overlay videos
+│   └── utils.R                 shared utility functions (sourced by other R scripts)
+├── python/                     Python pipeline scripts
+│   ├── qc_check.py             compile QC logs, threshold check, missing/dup detection (CLI)
+│   ├── qc_classifiers.py       extract video clips at detected behavior bouts
+│   ├── qc_viewer.py            Streamlit app for reviewing and annotating behavior clips
 │   └── pose_corner_correction.py  copy pose_v6 files and embed manual corner corrections
-├── notebooks/                exploratory analysis (not part of the main pipeline)
-│   └── explore_features.py   PCA, clustering, and correlation exploration
+├── notebooks/                  interactive analysis tools
+│   ├── check_videos.ipynb      paginated video frame previewer with motion screening
+│   └── explore_features.py     PCA, clustering, and correlation exploration
+├── src/
+│   └── utils.py                shared Python utilities (video helpers, pose overlay, motion screening)
 ├── config/
-│   └── QC_params.yaml        default QC thresholds (override via --param flag)
-├── pyproject.toml            Python dependencies (managed with uv)
-└── renv.lock                 R dependencies (managed with renv)
+│   └── QC_params.yaml          default QC thresholds (override via --param flag)
+├── pyproject.toml              Python dependencies (managed with uv)
+└── renv.lock                   R dependencies (managed with renv)
 ```
-
----
-
-## Workflow Overview
-
-The pipeline follows six steps. Steps marked **planned** do not have an implementation yet.
-
-| Step | Description | R | Python |
-|------|-------------|---|--------|
-| 1 | Visual inspection of videos | — | planned |
-| 2+3 | Compile QC logs, check thresholds, flag missing/duplicate entries | `r/2_qc_check.R` | `python/2_qc_check.py` |
-| 4 | Combine all outputs from different batches into unified format | `r/4_combine_batches.R` | planned |
-| 5 | Check for outliers and plot correlation heatmap | `r/5a_outliers.R`, `r/5b_heatmap.R` | — |
-| 6 | View snippets of predicted behaviors | — | planned |
-
-Steps 2 and 3 are combined in a single script since they share the same inputs.
 
 ---
 
@@ -60,15 +50,13 @@ uv sync
 
 ---
 
-## Step 2+3 — QC Check
+## Scripts
 
-**Scripts:** `r/2_qc_check.R` (interactive) · `r/2_qc_check_cli.R` (CLI) · `python/2_qc_check.py` (CLI)
+### QC Check — `r/qc_check.R` · `r/qc_check_cli.R` · `python/qc_check.py`
 
-Reads all Nextflow outputs, validates data completeness, screens for duplicates, post-processes gait data, and generates QC figures for fecal boli.
+Reads all Nextflow outputs across batches, validates data completeness, screens for duplicates, post-processes gait data, and generates QC figures for fecal boli. Produces individual cleaned feature files ready for merging.
 
-### Inputs
-
-The `--input_dir` should contain one or more batch subdirectories with these files (searched recursively):
+**Inputs** — `--input_dir` should contain one or more batch subdirectories with these files (searched recursively):
 
 | Pattern in filename | Content |
 |---------------------|---------|
@@ -78,30 +66,27 @@ The `--input_dir` should contain one or more batch subdirectories with these fil
 | `feature` | JABS behavior feature CSVs |
 | `morpho` | Morphometrics CSVs |
 
-### Assumptions
-
-1. Missing gait speed bins mean no gaits were predicted for those bins — not that gait prediction was skipped entirely.
+**Assumptions:**
+1. Missing gait speed bins mean no gaits were predicted for those bins — not that gait prediction was skipped.
 2. All videos to be analyzed appear in at least one `qc_batch_*.csv` file.
 
-### Running (Python CLI)
-
+**Running (Python):**
 ```bash
-python python/2_qc_check.py \
+python python/qc_check.py \
     --input_dir /path/to/NextflowOutput \
     --output_dir /path/to/project_output \
     --param config/QC_params.yaml     # optional, overrides defaults
 ```
 
-### Running (R CLI)
-
+**Running (R CLI):**
 ```bash
-Rscript r/2_qc_check_cli.R \
+Rscript r/qc_check_cli.R \
     --input_dir /path/to/NextflowOutput \
     --output_dir /path/to/project_output \
     --param config/QC_params.yaml
 ```
 
-### QC Parameters (`config/QC_params.yaml`)
+**QC Parameters (`config/QC_params.yaml`):**
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -112,8 +97,7 @@ Rscript r/2_qc_check_cli.R \
 | `max_missing_keypoint` | 1% | Max fraction of missing keypoint frames |
 | `fecal_boli_quantile_plotting` | 0.05 | Lower quantile threshold for fecal boli outlier plots |
 
-### Outputs
-
+**Outputs:**
 ```
 output_dir/
 ├── final_nextflow_feature_data/
@@ -121,47 +105,36 @@ output_dir/
 │   │                             variances set to NA for bins with <3 strides
 │   ├── morphometrics_final.csv
 │   ├── JABS_features_final.csv
-│   └── fecal_boli_raw.csv        ← requires manual review before proceeding
+│   └── fecal_boli_raw.csv        ← requires manual review before merging
 └── qc/
     ├── nextflow_qc_logs/
     │   ├── qc_all.csv            all videos with pass/fail flags
     │   └── qc_failed.csv         failed videos only
     ├── missing_or_dup_data/
     │   ├── missing_data.csv      in QC report but missing from feature files
-    │   ├── videos_not_in_qc_report.csv  in feature files but missing from QC report
+    │   ├── videos_not_in_qc_report.csv
     │   └── duplicated_data.xlsx  identical or highly correlated rows
     └── qc_figs/
         └── fecal_boli_qc_figs.pdf
 ```
 
-### Manual steps before proceeding to Step 4
-
-1. Review `qc/nextflow_qc_logs/qc_failed.csv`. Manually overlay pose on flagged videos, decide which to keep or exclude.
+**Manual steps after running:**
+1. Review `qc/nextflow_qc_logs/qc_failed.csv`. Overlay pose on flagged videos and decide which to keep or exclude.
 2. Create `videos_to_exclude.txt` in your output directory — one `NetworkFilename` per line.
-3. Review `qc/qc_figs/fecal_boli_qc_figs.pdf`. Correct any erroneous fecal boli counts in `final_nextflow_feature_data/fecal_boli_raw.csv`, then save it as `fecal_boli_final.csv` in the same directory.
+3. Review `qc/qc_figs/fecal_boli_qc_figs.pdf`. Correct erroneous counts in `final_nextflow_feature_data/fecal_boli_raw.csv`, then save as `fecal_boli_final.csv` in the same directory.
 
 ---
 
-## Step 4 — Combine Batches
+### Combine Batches — `r/combine_batches.R`
 
-**Script:** `r/4_combine_batches.R`
+Merges the four cleaned feature files with `metadata.csv`, checks that all videos and mice are represented, and outputs a single merged dataset.
 
-Merges the four final feature files with a `metadata.csv`, ensures all videos are represented across all files, and outputs a single merged dataset.
-
-### Inputs
-
-Expects the outputs of Step 2+3 in `final_nextflow_feature_data/`:
-- `gait_final.csv`
-- `morphometrics_final.csv`
-- `JABS_features_final.csv`
-- `fecal_boli_final.csv` (manually corrected from `fecal_boli_raw.csv`)
-
-Also requires:
+**Inputs** — expects outputs from the QC check step in `final_nextflow_feature_data/`:
+- `gait_final.csv`, `morphometrics_final.csv`, `JABS_features_final.csv`, `fecal_boli_final.csv`
 - `metadata.csv` — must have a `MouseID` column whose values appear as substrings in `NetworkFilename`
-- `videos_to_exclude.txt` — created during manual QC in Step 2+3
+- `videos_to_exclude.txt` — created during manual QC
 
-### Outputs
-
+**Outputs:**
 ```
 output_dir/
 ├── merged_nextflow_dataset.csv
@@ -170,31 +143,23 @@ output_dir/
     └── mice_missing_in_metadata.csv
 ```
 
-### Manual steps before proceeding to Step 5
-
-Review the generated QC tables. Mismatches between metadata and data do not stop the merge, but should be resolved or documented before final analysis.
+Mismatches between metadata and data do not stop the merge but should be reviewed.
 
 ---
 
-## Step 5 — Outliers and Heatmap
+### Outliers — `r/outliers.R`
 
-**Scripts:** `r/5a_outliers.R` · `r/5b_heatmap.R`
+Template script for final dataset preparation — intended to be customized per project. Removes zero-variance phenotypes, generates z-score outlier plots, and produces the final analysis-ready CSV.
 
-Prepares the final dataset for analysis. `5a_outliers.R` is a template script intended to be customized per project.
-
-### Inputs
-
-- `merged_nextflow_dataset.csv` from Step 4
-
-### Configuration (edit the `Set QC and other Values` section)
-
+**Edit the `Set QC and other Values` section to configure:**
 - Project name prefix for output files
-- Feature substrings to manually exclude (`features.removed.manually`)
+- Feature substrings to manually exclude
 - Z-score threshold for outlier detection
 - Number of top outlier mice/phenotypes to plot
 
-### Outputs (`5a_outliers.R`)
+**Inputs:** `merged_nextflow_dataset.csv` from Combine Batches
 
+**Outputs:**
 ```
 output_dir/
 ├── YOUR_PROJECT_final_nextflow_dataset.csv
@@ -212,11 +177,59 @@ output_dir/
 
 ---
 
-## Pose Corner Correction (utility)
+### Heatmap — `r/heatmap.R`
 
-**Script:** `python/pose_corner_correction.py`
+Generates phenotype correlation heatmaps. Under active development.
 
-Copies `pose_est_v6.h5` files from `failed_corners/` subdirectories and embeds manually corrected corner coordinates from SLEAP annotation files.
+---
+
+### Video Inspection — `notebooks/check_videos.ipynb`
+
+Paginated video frame previewer for HPC environments — no GUI or local download required. Samples 5 evenly spaced frames per video and shows 10 videos per page with Next/Previous navigation. Also includes a motion-based screen to flag likely empty videos.
+
+Powered by `src/utils.py` — imports `browse_videos` and `browse_videos_motion_screen` from there.
+
+**Launch:** Open in JupyterLab and run cells interactively.
+
+---
+
+### Behavior Clip Extraction — `python/qc_classifiers.py`
+
+Samples random video clips at detected behavior bouts, with optional pose skeleton overlay. Reads merged behavior CSV tables produced by Nextflow and writes short MP4 clips for review.
+
+```bash
+# Single behavior, no pose overlay:
+python python/qc_classifiers.py \
+    --behavior-csv NextflowOutput/batch_aa/merged_behavior_tables/merged_escape_bouts_merged.csv \
+    --video-dir NextflowOutput/batch_aa/results/videos/ \
+    --output-dir /tmp/qc_clips/ \
+    --n-clips 3
+
+# All behaviors in a folder, with pose skeleton:
+python python/qc_classifiers.py \
+    --behavior-dir NextflowOutput/batch_aa/merged_behavior_tables/ \
+    --video-dir NextflowOutput/batch_aa/results/videos/ \
+    --output-dir /tmp/qc_clips/ \
+    --n-clips 5 --overlay-pose
+```
+
+---
+
+### Behavior Clip Viewer — `python/qc_viewer.py`
+
+Streamlit app for reviewing and annotating the clips produced by `qc_classifiers.py`. Shows one clip at a time with Accept / Reject / Skip buttons; saves verdicts to `annotations.csv`.
+
+```bash
+streamlit run python/qc_viewer.py -- \
+    --clips-dir /tmp/qc_clips/ \
+    --annotations-csv /tmp/annotations.csv
+```
+
+---
+
+### Pose Corner Correction — `python/pose_corner_correction.py`
+
+Copies `pose_est_v6.h5` files and embeds manually corrected corner coordinates from SLEAP annotation files.
 
 ```bash
 python python/pose_corner_correction.py \
@@ -224,9 +237,9 @@ python python/pose_corner_correction.py \
     --output_dir /path/to/pose_v6_dir
 ```
 
-Expects each batch directory inside `--input_dir` to optionally contain:
-- `manual_corner_correction.slp` — SLEAP file with corrected corner annotations
-- `failed_corners/` — directory containing `*_pose_est_v6.h5` files to correct
+Expects each batch subdirectory to optionally contain:
+- `manual_corner_correction.slp` — SLEAP file with corrected corners
+- `failed_corners/` — `*_pose_est_v6.h5` files to update
 
 ---
 
@@ -236,15 +249,15 @@ Expects each batch directory inside `--input_dir` to optionally contain:
 /project_output_dir/
 ├── videos_to_exclude.txt                        (manually created)
 ├── metadata.csv                                 (manually provided)
-├── YOUR_PROJECT_final_nextflow_dataset.csv      (Step 5 output → downstream analysis)
-├── features_removed_from_curated_dataset.csv    (Step 5 output)
-├── merged_nextflow_dataset.csv                  (Step 4 output)
-├── final_nextflow_feature_data/                 (Step 2+3 outputs)
+├── YOUR_PROJECT_final_nextflow_dataset.csv      (outliers.R output → downstream analysis)
+├── features_removed_from_curated_dataset.csv
+├── merged_nextflow_dataset.csv                  (combine_batches.R output)
+├── final_nextflow_feature_data/                 (qc_check outputs)
 │   ├── gait_final.csv
 │   ├── morphometrics_final.csv
 │   ├── JABS_features_final.csv
 │   ├── fecal_boli_raw.csv
-│   └── fecal_boli_final.csv                     (manually corrected from fecal_boli_raw.csv)
+│   └── fecal_boli_final.csv                     (manually corrected)
 └── qc/
     ├── nextflow_qc_logs/
     │   ├── qc_all.csv

@@ -1,239 +1,151 @@
-#A script to merge NextFlow outputs for final analysis
-#Developed by Dr. Jake Beierle (don't forget the Dr., it's important)
-
-
-#----Documentation----
-#See comprehensive documentation on the github repository
-#https://github.com/jacobbeierle/JABS_nextflow_postprocess/tree/main
-
-#Load Libraries----------------------------------------------------------------
 library(tidyverse)
 library(data.table)
 library(janitor)
-options(error = NULL) #helps with error handling in functions checking for directories and filenames
-#########################################################Define the working directory and variables------------------------------------------------------------------
+options(error = NULL)
 
-##If you are not using an R project, set your working directory
+source("r/utils.R")
 
-#working.directory <- "C:\\Users\\beierj\\Desktop\\2025-04-09_NTG_C1-C5_Analysis"
+# ---- Configuration -----------------------------------------------------------
 
-#Create functions--------------------------------------------------------------
+# Set working directory if not using an R project:
+# working.directory <- "/path/to/project"
+if (exists("working.directory")) setwd(working.directory)
 
-#A function to compares two vectors for the presence or absence of NetworkFilenames
-compare_NetworkFilenames <- function(x, y){
-  #Check if there are missing NetworkFilenames in the vectors x and y
-  if(setequal(x, y) == FALSE){
-    #Create data frames with missing data, create boolean col for failure reason
-    x.notin.y <- tibble(
-      NetworkFilename = setdiff(x, y),
-      !!gsub("\\$NetworkFilename", "", paste0(deparse(substitute(x)), "_not_in_", deparse(substitute(y)))) := 1
-    )
-    
-    y.notin.x <- tibble(
-      NetworkFilename = setdiff(y, x),
-      !!gsub("\\$NetworkFilename", "", paste0(deparse(substitute(y)), "_not_in_", deparse(substitute(x)))) := 1
-    )
-    
-    #Full joining two dataframes containing missing values by a dummy value N
-    out <- full_join(x.notin.y, y.notin.x)
-    out[is.na(out)] <- 0
-    out
-  }else{NULL} #If nothing is missing, return a NULL vector
+final_feature_dir  <- file.path("Nextflow_Output", "final_nextflow_feature_data")
+qc_missing_dup_dir <- file.path("qc", "missing_or_dup_data")
+metadata_file      <- "metadata.csv"
+exclude_file       <- "videos_to_exclude.txt"
+
+# ---- Functions ---------------------------------------------------------------
+
+validate_inputs <- function(feature_dir, qc_dir) {
+  check_dir_exists(
+    feature_dir,
+    hint = "Run qc_check.R first to generate the feature files."
+  )
+  for (f in c("fecal_boli_final.csv", "gait_final.csv",
+              "JABS_features_final.csv", "morphometrics_final.csv")) {
+    check_file_exists(file.path(feature_dir, f))
+  }
+  check_dir_exists(
+    qc_dir,
+    hint = "Run qc_check.R first to generate the qc/ directory."
+  )
 }
 
-#A function to make sure the file path exists, and if not, stop the code with an error being output
-check_files_exist <- function(file_path) {
-  if (!file.exists(file_path)) {
-    stop(paste0(
-      "YOU DO NOT HAVE A '", file_path, "' FILE\n",
-      "YOU NEED A '", file_path,"' FILE TO CONTINUE"
-    ), call. = FALSE)
+
+load_feature_files <- function(feature_dir) {
+  read_one <- function(pattern) {
+    list.files(feature_dir, pattern = pattern, full.names = TRUE) |> read_csv()
+  }
+  list(
+    gait       = read_one("gait_final"),
+    morpho     = read_one("morphometrics_final") |> relocate(NetworkFilename),
+    fecal_boli = read_one("fecal_boli_final")    |> relocate(NetworkFilename),
+    jabs       = read_one("features_final")
+  )
+}
+
+
+check_networkfilenames <- function(features, out_dir) {
+  g <- features$gait$NetworkFilename
+  m <- features$morpho$NetworkFilename
+  f <- features$fecal_boli$NetworkFilename
+  j <- features$jabs$NetworkFilename
+
+  mismatches <- Filter(Negate(is.null), list(
+    compare_NetworkFilenames(g, m),
+    compare_NetworkFilenames(g, f),
+    compare_NetworkFilenames(g, j),
+    compare_NetworkFilenames(m, f),
+    compare_NetworkFilenames(m, j),
+    compare_NetworkFilenames(f, j)
+  ))
+
+  if (length(mismatches) > 0) {
+    result <- Reduce(function(x, y) merge(x, y, by = "NetworkFilename", all = TRUE), mismatches)
+  } else {
+    result <- "NETWORKFILE NAMES MATCH PERFECTLY ACROSS DATAFRAMES"
+  }
+
+  write.csv(result, file.path(out_dir, "NetworkFilenames_missing_in_data.csv"), row.names = FALSE)
+  result
+}
+
+
+merge_features <- function(features, exclude_file) {
+  df <- features$gait |>
+    merge(features$jabs,       by = "NetworkFilename") |>
+    merge(features$morpho,     by = "NetworkFilename") |>
+    merge(features$fecal_boli, by = "NetworkFilename")
+
+  excluded_videos_present <- FALSE
+  if (file.exists(exclude_file)) {
+    to_exclude <- read.table(exclude_file, quote = "\"", comment.char = "")
+    if (nrow(to_exclude) > 0) {
+      df <- df[!df$NetworkFilename %in% to_exclude$V1, ]
+      excluded_videos_present <- TRUE
+    }
+  }
+
+  list(data = df, excluded_videos_present = excluded_videos_present)
+}
+
+
+merge_with_metadata <- function(df, metadata_file, out_dir) {
+  check_file_exists(metadata_file)
+  metadata <- read_csv(metadata_file, col_types = cols(MouseID = col_character()))
+
+  df <- df |>
+    mutate(
+      FileName = str_split_i(NetworkFilename, "/", i = 4),
+      FileName = gsub("_trimmed.avi", "", FileName),
+      MouseID  = str_split_i(FileName, "_", i = 1)
+    ) |>
+    relocate(FileName)
+
+  metadata_check <- compare_NetworkFilenames(df$MouseID, metadata$MouseID)
+  if (is.null(metadata_check)) {
+    metadata_check <- "NO MICE MISSING IN METADATA & VICE VERSA"
+  }
+  write.csv(metadata_check, file.path(out_dir, "mice_missing_in_metadata.csv"), row.names = FALSE)
+
+  list(
+    data           = merge(metadata, df, by = "MouseID"),
+    metadata_check = metadata_check
+  )
+}
+
+
+report_errors <- function(networkfilename_check, metadata_check, excluded_videos_present) {
+  errors <- c(
+    if (!is.character(networkfilename_check))
+      "NetworkFilenames do not match perfectly across feature files — see NetworkFilenames_missing_in_data.csv",
+    if (!is.character(metadata_check))
+      "Mice in metadata and data do not match perfectly — see mice_missing_in_metadata.csv",
+    if (!excluded_videos_present)
+      "No videos_to_exclude.txt found (or file is empty) — is manual QC complete?"
+  )
+
+  if (length(errors) == 0) {
+    message("No errors to report.")
+  } else {
+    message(paste(c("Warnings:", errors), collapse = "\n  "))
   }
 }
 
+# ---- Main --------------------------------------------------------------------
 
-#Set working directory, and check for expected file names and directories---------------------------------
+validate_inputs(final_feature_dir, qc_missing_dup_dir)
 
-#Set the expected directory to final nextflow feature csv files
-final.nextflow.feature.dir <- "Nextflow_Output/final_nextflow_feature_data"
-#Set directories for QC directories
-qc.missing_dup.dir <- file.path("qc", "missing_or_dup_data")
-qc.figs.dir <- file.path("qc", "qc_figs")
+features <- load_feature_files(final_feature_dir)
 
-#Set the expected metadata filename
-metadata.filename <- "metadata.csv"
-#Set the expected name of the index of videos to exclude
-excluded.videos <- "videos_to_exclude.txt"
+networkfilename_check <- check_networkfilenames(features, qc_missing_dup_dir)
 
-#If you have defined a working directory above, set it here
-if(exists("working.directory")){
-  setwd(working.directory)
-}
+merged <- merge_features(features, exclude_file)
 
-#Check for 'Nextflow_Output/final_nextflow_feature_data/'
-#This is where processed data from previous script should be published, report error if there is no directory
+result <- merge_with_metadata(merged$data, metadata_file, qc_missing_dup_dir)
 
-if(!dir.exists(final.nextflow.feature.dir)){
-  stop("YOU DO NOT HAVE A 'Nextflow_Output/final_nextflow_feature_data' DIRECTORY IN YOUR WORKING DIRECTORY \n
-       YOU NEED TO RUN 'NextFlow_Output_QC_Postprocess_1.R' TO PRODUCE THESE FINAL FILES") 
-}else{
-  #Check to ensure all files needed for this code are present
-  check_files_exist(file.path(final.nextflow.feature.dir, "fecal_boli_final.csv"))
-  check_files_exist(file.path(final.nextflow.feature.dir, "gait_final.csv"))
-  check_files_exist(file.path(final.nextflow.feature.dir, "JABS_features_final.csv"))
-  check_files_exist(file.path(final.nextflow.feature.dir, "morphometrics_final.csv"))
-  }
+write_csv(result$data, file.path(final_feature_dir, "merged_nextflow_dataset.csv"))
 
-#Check that qc directory for missing and duplicated data exists, report error if it does not
-if(!dir.exists(qc.missing_dup.dir)){
-  stop("YOU DO NOT HAVE A 'qc/missing_or_dup_data' DIRECTORY IN YOUR WORKING DIRECTORY\n
-       YOU SHOULD HAVE THEM IF YOU RAN 'NextFlow_Output_QC_Postprocess_1.R' TO PRODUCE FINAL NEXTFLOW FEATURE FILES") 
-}else{qc.missing_dup.dir <- file.path("qc", "missing_or_dup_data")}
-
-
-#Read in the final nextflow features files from 'NextFlow_Output_QC_Postprocess_1.R'------
-
-#Read in gait
-gait.final <- list.files(
-  path = final.nextflow.feature.dir,
-  pattern = "gait_final",
-  full.names = TRUE) |> 
-  read_csv()
-
-#Read in morphometrics
-morpho.final <- list.files(
-  path = final.nextflow.feature.dir,
-  pattern = "morphometrics_final",
-  full.names = TRUE) |> 
-  read_csv() |> 
-  relocate(NetworkFilename)
-
-#Read in fecal boli
-fecal_boli.final <- list.files(
-  path = final.nextflow.feature.dir,
-  pattern = "fecal_boli_final",
-  full.names = TRUE) |> 
-  read_csv() |> 
-  relocate(NetworkFilename)
-
-#Read in JABS features
-JABS.final <- list.files(
-  path = final.nextflow.feature.dir,
-  pattern = "features_final",
-  full.names = TRUE) |> 
-  read_csv()
-
-#Check NetworkFilenames, and merge it all together!---------------------------------------------------------
-
-#Create a list of dataframes representing NetworkFilenames missing in pairwise comparison of dataframes
-NetworkFilename.check <- list(
-  compare_NetworkFilenames(gait.final$NetworkFilename, morpho.final$NetworkFilename),
-  compare_NetworkFilenames(gait.final$NetworkFilename, fecal_boli.final$NetworkFilename),
-  compare_NetworkFilenames(gait.final$NetworkFilename, JABS.final$NetworkFilename),
-  compare_NetworkFilenames(morpho.final$NetworkFilename, fecal_boli.final$NetworkFilename),
-  compare_NetworkFilenames(morpho.final$NetworkFilename, JABS.final$NetworkFilename),
-  compare_NetworkFilenames(fecal_boli.final$NetworkFilename, JABS.final$NetworkFilename)
-)
-#Remove the empty elements, i.e. instances where no NetworkFilenames were missing
-NetworkFilename.check <- Filter(Negate(is.null), NetworkFilename.check)
-#Merge all items on the list into a single data frame
-merged.NetworkFilename.check <- Reduce(function(x, y) merge(x, y, by = "NetworkFilename", all = TRUE), NetworkFilename.check)
-
-
-#Publish error reporting data frame if the length is above 0
-#Otherwise publish confirmation of no errors and merge all dataframes
-if(length(merged.NetworkFilename.check)){
-  #Publish error report
-  write.csv(merged.NetworkFilename.check, file.path(qc.missing_dup.dir, "NetworkFilenames_missing_in_data.csv"), row.names = FALSE)
-}else{
-  #Report that no data is missing
-  merged.NetworkFilename.check <- "NETWORKFILE NAMES MATCH PERFECTLY ACROSS DATAFRAMES"
-  #Publish error free report
-  write.csv(merged.NetworkFilename.check, file.path(qc.missing_dup.dir, "NetworkFilenames_missing_in_data.csv"), row.names = FALSE)
-}
-
-#Merge all dataframes
-nextflow_dataset.metadata_not_merged <- gait.final |> 
-  merge(JABS.final, by = "NetworkFilename") |> 
-  merge(morpho.final, by = "NetworkFilename") |> 
-  merge(fecal_boli.final, by = "NetworkFilename")
-
-
-#Remove Videos that Failed QC, Requires manual screening------------------------
-
-if(!file.exists(excluded.videos)){
-  videos_to_exclude.exists <- FALSE
-}else{
-  videos_to_exclude <- read.table(excluded.videos, quote="\"", comment.char="")
-  if(length(videos_to_exclude)){
-    nextflow_dataset.metadata_not_merged <- nextflow_dataset.metadata_not_merged[!nextflow_dataset.metadata_not_merged$NetworkFilename %in% videos_to_exclude$V1, ]
-    videos_to_exclude.exists <- TRUE
-  }else(videos_to_exclude.exists <- FALSE)
-}
-
-#Merge with metadata in top directory of project folder-------------------------
-
-#Read Metadata, or throw error if it does not exist
-if(file.exists(metadata.filename)){
-  metadata <- read_csv(metadata.filename,
-                       col_types = cols(MouseID = col_character()) )
-}else{
-  stop(paste0("YOU DO NOT HAVE A '", metadata.filename, "' FILE IN YOUR WORKING DIRECTORY YOU NEED A '", metadata.filename, "' file TO RUN THIS SCRIPT")) 
-}
-
-#Prepare NetworkFilename to Filename, to allow merging of metadata
-nextflow_dataset.metadata_not_merged$FileName <- str_split_i(nextflow_dataset.metadata_not_merged$NetworkFilename, "/", i=4)
-nextflow_dataset.metadata_not_merged$FileName <- gsub("_trimmed.avi", "", nextflow_dataset.metadata_not_merged$FileName)
-nextflow_dataset.metadata_not_merged <- relocate(nextflow_dataset.metadata_not_merged, FileName)
-
-nextflow_dataset.metadata_not_merged$MouseID <- str_split_i(nextflow_dataset.metadata_not_merged$FileName, "_", i=1)
-
-#Check that all mice in metadata are represented in dataset, and vice versa
-metadata.qc.check <- compare_NetworkFilenames(nextflow_dataset.metadata_not_merged$MouseID, metadata$MouseID)
-
-#Publish error report
-if(length(metadata.qc.check)){
-  #Publish error report
-  write.csv(metadata.qc.check, file.path(qc.missing_dup.dir, "mice_missing_in_metadata.csv"), row.names = FALSE)
-}else{
-  #Publish error free report
-  metadata.qc.check <- "NO MICE MISSING IN METADATA & VICE VERSA"
-  write.csv(metadata.qc.check, file.path(qc.missing_dup.dir, "mice_missing_in_metadata.csv"), row.names = FALSE)
-}
-
-#Merge Metadata
-nextflow_dataset.final <- merge(metadata, nextflow_dataset.metadata_not_merged, by = "MouseID")
-
-#Publish CSV--------------------------------------------------------------------
-
-write_csv(nextflow_dataset.final, file.path(final.nextflow.feature.dir, "merged_nextflow_dataset.csv"))
-
-#Error reporting----------------------------------------------------------------
-error.reporting <- NULL
-
-#Report to terminal if data is missing from QC log but in feature tables'
-#Because passed QC assigns this object to a string reporting the lack of failed QC
-#We can use is.character() to determine if QC passed
-if(!is.character(merged.NetworkFilename.check)){
-  error.reporting <- c(error.reporting, "NETWORKFILE NAMES DO NOT MATCH PERFECTLY ACROSS FINAL NEXTFLOW DATAFRAMES")
-}
-
-#Report to terminal if mice are missing from metadata and vice versa
-if(!is.character(metadata.qc.check)){
-  error.reporting <- c(error.reporting, "MICE IN METADATA AND DATA DO NOT MATCH PERFECTLY")
-}
-
-
-#Check that videos_to_exclude.txt is present and has data in it
-if(videos_to_exclude.exists == FALSE){
-  error.reporting <- c(error.reporting, "THERE IS NO 'videos_to_exclude.txt' IN YOUR WORKING DIRECTORY OR THERE ARE NO VIDEOS LISTED WITHIN IT, ARE THERE REALLY NO VIDEOS TO EXCLUDE BASED ON MANUALLY SCREEDED QC?")
-}
-
-
-#Print out all errors after code done running
-if(length(error.reporting) == 0){
-  print("FINAL ERROR REPORT: NO ERRORS TO REPORT")
-}else{
-  print("FINAL ERROR REPORT:", )
-  paste(error.reporting)
-}
+report_errors(networkfilename_check, result$metadata_check, merged$excluded_videos_present)

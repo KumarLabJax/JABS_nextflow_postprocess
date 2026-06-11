@@ -15,4 +15,8 @@ dependencies = [
     "scipy",
     "pyyaml",
     "openpyxl",
+    "opencv-python",
+    "streamlit",
+    "ipywidgets",
+    "ipyfilechooser",
 ]
