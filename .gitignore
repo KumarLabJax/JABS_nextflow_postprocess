@@ -1,0 +1,8 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+pose_v6_dir
+# Python bytecode
+__pycache__/
+*.pyc

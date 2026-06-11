@@ -16,12 +16,9 @@ options(error = NULL) #helps with error handling in functions checking for direc
 
 #If you are not using an R project, set your working directory
 #working.directory <- "C:\\Users\\beierj\\Desktop\\2025-04-09_NTG_C1-C5_Analysis"
-working.directory <- "C:\\Users\\beierj\\Desktop\\2025-10-29_OW_Pilot_V1-5_WS1-4"
-
 
 ## Set some pithy project name to be appended to your curated dataset
 #project_name <- "NTG_C1-5"
-project_name <- "OW"
 
 
 #Sometimes features from nextflow are not useful because they are not reliable in your experimental
@@ -32,14 +29,14 @@ project_name <- "OW"
 #These strings will be used to filter out cols that contain them, so be specific in your choice of wording
 
 #features.removed.manually <- c("Side_seizure", "Tail_jerk", "Wild_jumping")
-features.removed.manually <- NULL
+#features.removed.manually <- NULL
 
 #Set z-score threshold for outlier screening
 zscore.threshold <- 6
 
 #Set the number of phenotypes to print with the highest, and most common outliers
 how.many.highest.zscore.outlier.plots <- 16
-how.many.most.freq.outlier.plots <- 16
+how.many.most.freq.outlier.plots <- 8
 
 
 #Create functions--------------------------------------------------------------
@@ -303,7 +300,7 @@ if(!dir.exists(qc.figs.dir)){
 check_files_exist(file.path(merged_nextflow_dataset.dir, "merged_nextflow_dataset.csv"))
 
 #Load merged dataset and set variables for final data output----
-data.nextflow <- read_csv(file.path(merged_nextflow_dataset.dir, "merged_nextflow_dataset.csv"))
+data.Nextflow <- read_csv(file.path(merged_nextflow_dataset.dir, "merged_nextflow_dataset.csv"))
 
 
 #Check that qc directory for missing and duplicated data exists, report error if it does not
@@ -319,22 +316,22 @@ if(!dir.exists(qc.figs.dir)){
 
 #Manually remove the features you defined at the top of this script
 if(length(features.removed.manually)){
-  data.nextflow <- data.nextflow |> 
+  data.Nextflow <- data.Nextflow |> 
     select(!contains(features.removed.manually))
 }
 
 
 #Some of the morphometric features are always identical, and I remove these now too.
 # Identify columns where the variance is not zero
-nonzero_variance_cols <- sapply(data.nextflow, function(x) var(x, na.rm = TRUE)) == 0
+nonzero_variance_cols <- sapply(data.Nextflow, function(x) var(x, na.rm = TRUE)) == 0
 #Replace the NAs with FALSE, as these represent strings etc
 nonzero_variance_cols[is.na(nonzero_variance_cols)] <- FALSE
 
 #Recording these features in a vector makes reporting what was removed easier at the end
-features.removed.zerovar <- colnames(data.nextflow)[nonzero_variance_cols]
+features.removed.zerovar <- colnames(data.Nextflow)[nonzero_variance_cols]
 
 # Subset the data frame to remove zerovar cols
-data.nextflow <- data.nextflow[, !nonzero_variance_cols]
+data.Nextflow <- data.Nextflow[, !nonzero_variance_cols]
 
 
 #Print a csv of the features removed with reasons
@@ -363,22 +360,22 @@ if(nrow(features.removed.all)){
 
 
 ##Provide string of day for analysis
-#data.nextflow$Day <- str_split_i(data.nextflow$NetworkFilename, "/", i=3)
-#data.nextflow$Day <- gsub("D", "", data.nextflow$Day)
-#data.nextflow$Day <- as.numeric(data.nextflow$Day)
+#data.Nextflow$Day <- str_split_i(data.Nextflow$NetworkFilename, "/", i=3)
+#data.Nextflow$Day <- gsub("D", "", data.Nextflow$Day)
+#data.Nextflow$Day <- as.numeric(data.Nextflow$Day)
 
 ##I'm removing doses and days I don't really care about, i.e. 2.5 and 5 mg/kg
-#data.nextflow <- subset(data.nextflow, data.nextflow$Tx!= 5 & data.nextflow$Tx != 2.5)
-#data.nextflow <- subset(data.nextflow, data.nextflow$Day != 21)
+#data.Nextflow <- subset(data.Nextflow, data.Nextflow$Tx!= 5 & data.Nextflow$Tx != 2.5)
+#data.Nextflow <- subset(data.Nextflow, data.Nextflow$Day != 21)
 
 ##Reorder the factors
-#data.nextflow <- relocate(data.nextflow, NetworkFilename, FileName, MouseID, PenID, ExptNumber, Cohort, Sex = sex, Day, Tx, LL)
+#data.Nextflow <- relocate(data.Nextflow, NetworkFilename, FileName, MouseID, PenID, ExptNumber, Cohort, Sex = sex, Day, Tx, LL)
 
 ########################################Summary information reporting--------------------------------------------------
 #You can also take this time to report useful information for your analysis
 
 #Example generating summaries of number of samples/timepoint
-#data.nextflow |> 
+#data.Nextflow |> 
 #  group_by(Day, Tx) |> 
 #  summarise(N = n()) |> 
 #  arrange(desc(Tx), Day) |> 
@@ -386,12 +383,49 @@ if(nrow(features.removed.all)){
 
 
 #Publish the final, curated data set--------------------------------------------
-write.csv(data.nextflow, paste0(project_name, "_final_nextflow_dataset.csv"), row.names = FALSE)
+write.csv(data.Nextflow, paste0(project_name, "_final_nextflow_dataset.csv"), row.names = FALSE)
 
 #Before QC plotting, I use janitor to clean col names because Nextflow col names are rough to work with----
-colnames(data.nextflow) <- colnames(clean_names(data.nextflow))
+colnames(data.Nextflow) <- colnames(clean_names(data.Nextflow))
 
-#Preliminary QC: Read in gait colnames for subsetting data plots-----
+#Preliminary QC figures: outlines from linear model of 2 phenotypes-------------
+
+#Publish figures of linear relationships between 2 variables, with the 5 most distant points labeled
+#see doc in function section for details
+pdf(file.path(qc.figs.dir, "scatter_plot_lm_figs.pdf"), 7,7)
+print(
+  qc_plot_lm_outliers(data.Nextflow$distance_traveled,
+                      data.Nextflow$bin_avg_55_locomotion_distance_cm,
+                      data.Nextflow$network_filename)
+)
+
+print(
+  qc_plot_lm_outliers(data.Nextflow$bin_sum_55_jumping_bout_behavior,
+                      data.Nextflow$bin_sum_55_escape_bout_behavior,
+                      data.Nextflow$network_filename)
+)
+
+print(qc_plot_lm_outliers(data.Nextflow$bin_sum_55_freeze_bout_behavior,
+                          data.Nextflow$bin_sum_55_freezing_bout_behavior,
+                          data.Nextflow$network_filename)
+)
+
+print(qc_plot_lm_outliers(data.Nextflow$distance_traveled,
+                          data.Nextflow$speed,
+                          data.Nextflow$network_filename)
+)
+
+print(qc_plot_lm_outliers(data.Nextflow$bin_sum_55_in_periphery_time_secs,
+                          data.Nextflow$bin_sum_55_in_corner_time_secs,
+                          data.Nextflow$network_filename)
+)
+dev.off()
+
+
+#Preliminary QC figures: checking for outliers using z-score-----
+#Subset datasets and create Network_filename + phenotypes
+
+#Read in gait colnames for subsetting outlier data plots
 gait.cols <- list.files(
   path = merged_nextflow_dataset.dir,
   pattern = "gait_final",
@@ -418,145 +452,8 @@ JABS.cols <- list.files(
   clean_names()|> 
   colnames()
 
-
-
-#Preliminary QC figures: JABS phenotypes over time, average and by mouse-------------
-
-#By time
-
-pdf(file.path(qc.figs.dir, "JABS_features_over_timepoints.pdf") , 15,15)
-
-p1 <- data.nextflow|> 
-  select(contains(c("time", "network")) & !contains(c("traveled", "in_corner", "periphery", "locomotion"))) |> 
-  select(starts_with("bin_sum_") | contains("network")) |> 
-  pivot_longer(
-    cols = starts_with("bin_sum_"),
-    names_to = "bin_size",
-    values_to = "count"
-  ) |> 
-  extract(
-    bin_size,
-    into = c("bin_size", "behavior"),
-    regex = "bin_sum_(\\d+)_([\\S]+)_time_secs",
-    convert = TRUE
-  ) |> 
-  ggplot(aes(x = bin_size, y = count)) +
-    geom_line(aes(group = network_filename, colour = network_filename)) +
-    geom_point(aes(group = network_filename, colour = network_filename)) +
-    stat_summary(geom = "line", fun.data = mean_se) +
-    stat_summary(geom = "point",  fun.data = mean_se) +
-    stat_summary(geom = "ribbon", fun.data = mean_se, alpha = 0.3, colour = "black") + 
-    facet_wrap(facets = vars(behavior), scales = "free_y") +
-      labs(title = "Summed time in behavior over 2.5hrs",
-           y = "seconds (?)",
-           x = "mins") +
-    theme(legend.position = "none")
-print(p1)
-
-#By bout
-p1 <- data.nextflow|> 
-  select(contains(c("bout", "network")) & !contains(c("traveled", "in_corner", "periphery", "locomotion"))) |> 
-  select(starts_with("bin_sum_") | contains("network")) |> 
-  pivot_longer(
-    cols = starts_with("bin_sum_"),
-    names_to = "bin_size",
-    values_to = "count"
-  ) |> 
-  extract(
-    bin_size,
-    into = c("bin_size", "behavior"),
-    regex = "bin_sum_(\\d+)_([\\S]+)_bout_behavior",
-    convert = TRUE
-  ) |> 
-  ggplot(aes(x = bin_size, y = count)) +
-  geom_line(aes(group = network_filename, colour = network_filename)) +
-  geom_point(aes(group = network_filename, colour = network_filename)) +
-  stat_summary(geom = "line", fun.data = mean_se) +
-  stat_summary(geom = "ribbon", alpha = 0.3) + 
-  stat_summary(geom = "point",  fun.data = mean_se) +
-  facet_wrap(facets = vars(behavior), scales = "free_y") +
-  labs(title = "Bouts of behavior",
-       y = "bouts",
-       x = "mins") +
-  theme(legend.position = "none")
-
-print(p1)
-
-#JABS Distance measures
-p1 <- data.nextflow|> 
-  select(contains(c("network", "locomotion")))|> 
-  select(contains("network") | (starts_with("bin_sum_")))|> 
-  select(contains("network") | (ends_with("threshold")))|> 
-  pivot_longer(
-    cols = starts_with("bin_sum_"),
-    names_to = "bin_size",
-    values_to = "count"
-  ) |> 
-  extract(
-    bin_size,
-    into = c("bin_size", "behavior"),
-    regex = "bin_sum_(\\d+)_([\\S]+)_cm_threshold",
-    convert = TRUE
-  ) |> 
-  ggplot(aes(x = bin_size, y = count)) +
-  geom_line(aes(group = network_filename, colour = network_filename)) +
-  geom_point(aes(group = network_filename, colour = network_filename)) +
-  stat_summary(geom = "line", fun.data = mean_se) +
-  stat_summary(geom = "ribbon", alpha = 0.3) + 
-  stat_summary(geom = "point",  fun.data = mean_se) +
-  facet_wrap(facets = vars(behavior)) +
-  labs(title = "JABS Locomotion",
-       y = "cm",
-       x = "mins") +
-  theme(legend.position = "none")
-
-print(p1)
-
-dev.off()
-
-
-
-
-#Preliminary QC figures: outlines from linear model of 2 phenotypes-------------
-
-#Publish figures of linear relationships between 2 variables, with the 5 most distant points labeled
-#see doc in function section for details
-pdf(file.path(qc.figs.dir, "scatter_plot_lm_figs.pdf"), 7,7)
-print(
-  qc_plot_lm_outliers(data.nextflow$distance_traveled,
-                      data.nextflow$bin_avg_55_locomotion_distance_cm,
-                      data.nextflow$network_filename)
-)
-
-print(
-  qc_plot_lm_outliers(data.nextflow$bin_sum_55_jumping_bout_behavior,
-                      data.nextflow$bin_sum_55_escape_bout_behavior,
-                      data.nextflow$network_filename)
-)
-
-print(qc_plot_lm_outliers(data.nextflow$bin_sum_55_freeze_bout_behavior,
-                          data.nextflow$bin_sum_55_freezing_bout_behavior,
-                          data.nextflow$network_filename)
-)
-
-print(qc_plot_lm_outliers(data.nextflow$distance_traveled,
-                          data.nextflow$speed,
-                          data.nextflow$network_filename)
-)
-
-print(qc_plot_lm_outliers(data.nextflow$bin_sum_55_in_periphery_time_secs,
-                          data.nextflow$bin_sum_55_in_corner_time_secs,
-                          data.nextflow$network_filename)
-)
-dev.off()
-
-
-#Preliminary QC figures: checking for outliers using z-score-----
-#Subset datasets and create Network_filename + phenotypes
-
-
 #Gait outlier screening
-gait.outliers <- unified_zscore_processing(data.nextflow[colnames(data.nextflow) %in% gait.cols], zscore.threshold)
+gait.outliers <- unified_zscore_processing(data.Nextflow[colnames(data.Nextflow) %in% gait.cols], zscore.threshold)
 
 if(length(gait.outliers) != 0){
   pdf(file.path(zscore.boxplot.dir, "gait_boxplot_outlier_figs.pdf"), 16, 20)
@@ -566,7 +463,7 @@ if(length(gait.outliers) != 0){
 }
 
 #Morphometric outlier screening
-morpho.outliers <- unified_zscore_processing(data.nextflow[colnames(data.nextflow) %in% morpho.cols], zscore.threshold)
+morpho.outliers <- unified_zscore_processing(data.Nextflow[colnames(data.Nextflow) %in% morpho.cols], zscore.threshold)
 
 if(length(morpho.outliers) != 0){
   pdf(file.path(zscore.boxplot.dir, "morpho_boxplot_outlier_figs.pdf"), 16, 20)
@@ -577,7 +474,10 @@ if(length(morpho.outliers) != 0){
 
 #JABSmetric outlier screening
 #I should really subset these features
-JABS.outliers <- unified_zscore_processing(data.nextflow[colnames(data.nextflow) %in% JABS.cols], zscore.threshold)
+JABS.outliers <- unified_zscore_processing(data.Nextflow[colnames(data.Nextflow) %in% JABS.cols], zscore.threshold)
+
+unique(JABS.outliers$phenotype)
+
 
 #Subset JABS figures if there are too many cols
 if(length(JABS.outliers) != 0){
