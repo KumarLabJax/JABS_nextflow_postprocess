@@ -103,7 +103,7 @@ for (subdirectory in c("final_nextflow_feature_data",
 # ================
 # Read QC files in NextFlow_Output directory
 qc_log <- list.files(
-              path = "~/kumar-group/SING-grant/NextflowOutput/",
+              path = input.dir,
               pattern = "qc_batch_",
               full.names = TRUE,
               recursive = TRUE
@@ -228,7 +228,7 @@ check_missing_and_dup <- function(expected_videos, data_df, corr_thres = 0.99) {
 # Process fecal boli data
 # ==================
 # Concatenate all instances
-fecal_boli.raw <- read_raw_data(input_dir = "~/kumar-group/SING-grant/NextflowOutput/",
+fecal_boli.raw <- read_raw_data(input_dir = input.dir,
                                 pattern = "fecal_boli.csv")
 
 # Check for missing and duplicated data
@@ -296,7 +296,7 @@ invisible(dev.off())
 # Process Gait Data
 # ===============
 # Import Gait Data
-gait.raw <- read_raw_data(input_dir = "~/kumar-group/SING-grant/NextflowOutput/",
+gait.raw <- read_raw_data(input_dir = input.dir,
                           pattern = "gait.csv")
 
 video_level_metrics = c("Distance Traveled", "Body Length", "Speed", "Speed Variance", "nextflow_version")

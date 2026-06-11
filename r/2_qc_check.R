@@ -66,7 +66,8 @@ qc_files <- list.files(
 )
 
 qc_log <- qc_files %>%
-  map_dfr(~ read_csv(.x, show_col_types = FALSE))
+  set_names(qc_files) %>%
+  map_dfr(~ read_csv(.x, show_col_types = FALSE), .id = "QC_file")
 
 # Record why QC failed for each video
 qc_log <- qc_log %>%
@@ -301,6 +302,9 @@ morpho.raw <- read_raw_data(input_dir = input.dir,
 morpho.summary <- check_missing_and_dup(expected_videos = expected_videos,
                                         data_df = morpho.raw)
 
+#output to final CSV
+write.csv(morpho.raw, file.path(output.dir, "final_nextflow_feature_data/morphometrics.csv"), row.names = FALSE)
+
 # =================
 # Report and output data for all warnings
 # =================
@@ -370,3 +374,4 @@ if (no_missing_output && no_missing_qc && no_dups) {
     cat(paste("Duplicated data for", names(all_duplicated_data)[sapply(all_duplicated_data, nrow) != 0]), sep = "\n")
   }
 }
+
