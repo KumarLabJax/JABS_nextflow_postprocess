@@ -1,0 +1,18 @@
+[project]
+name = "jabs-nextflow-postprocess"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "h5py>=3.16.0",
+    "sleap-io>=0.7.0",
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    "scikit-learn",
+    "scipy",
+    "pyyaml",
+    "openpyxl",
+]
