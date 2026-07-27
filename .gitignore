@@ -3,6 +3,7 @@
 .RData
 .Ruserdata
 pose_v6_dir
+pose-qc-dashboard
 # Python bytecode
 __pycache__/
 *.pyc
