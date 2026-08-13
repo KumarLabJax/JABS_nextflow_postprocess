@@ -24,8 +24,10 @@ from urllib.parse import unquote
 
 import cv2
 import h5py
+import imageio.v2 as imageio
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
 # 12-keypoint JABS mouse skeleton.
@@ -81,28 +83,34 @@ def _label_from_filename(filename: str) -> str:
 # Path resolution
 # ---------------------------------------------------------------------------
 
-def video_name_to_paths(video_name: str, video_dir: Path) -> tuple[Path, Path]:
+def _ids_match(video_id: str, stem: str) -> bool:
+    """True if stem is video_id (or vice versa) with a '_'/'-'/'.' delimited suffix added/removed."""
+    if video_id == stem:
+        return True
+    shorter, longer = (video_id, stem) if len(video_id) < len(stem) else (stem, video_id)
+    if not longer.startswith(shorter):
+        return False
+    return longer[len(shorter)] in "_-."
+
+
+def video_name_to_paths(video_name: str, video_dir: Path) -> tuple[Path | None, Path | None]:
     """Return (mp4_path, h5_path) for a decoded video_name string.
 
-    video_name format: '{namespace} {batch_folder} {video_id}_trimmed_filtered'
-    MP4: strip '_filtered' suffix.  Pose H5: keep full video_id.
-    Searches video_dir directly first, then video_dir/namespace/batch_folder/.
+    video_name may carry a '{namespace} {batch_folder} {video_id}' prefix; only
+    the final token identifies the video. Rather than assuming a fixed suffix
+    (e.g. '_filtered') or directory layout (namespace/batch subfolders), this
+    searches video_dir recursively for an MP4/H5 whose stem is video_id up to
+    an added or removed suffix, so it isn't tied to one dataset's naming
+    convention or pose model version.
     """
-    parts = video_name.split(" ")
-    video_id = parts[-1]
-    namespace = parts[0] if len(parts) > 2 else ""
-    batch = parts[1] if len(parts) > 2 else ""
+    video_id = video_name.split(" ")[-1]
 
-    mp4_stem = video_id.replace("_filtered", "")
-    mp4_name = f"{mp4_stem}.mp4"
-    h5_name = f"{video_id}_pose_est_v6.h5"
+    mp4 = next((p for p in video_dir.rglob("*.mp4") if _ids_match(video_id, p.stem)), None)
 
-    for base in [video_dir, video_dir / namespace / batch]:
-        mp4 = base / mp4_name
-        if mp4.exists():
-            return mp4, base / h5_name
+    search_root = mp4.parent if mp4 is not None else video_dir
+    h5 = next((p for p in search_root.rglob("*.h5") if _ids_match(video_id, p.stem)), None)
 
-    return video_dir / mp4_name, video_dir / h5_name
+    return mp4, h5
 
 
 # ---------------------------------------------------------------------------
@@ -169,28 +177,28 @@ def extract_clip(
     """
     cap = cv2.VideoCapture(str(mp4_path))
     if not cap.isOpened():
-        print(f"  [warn] cannot open {mp4_path}", file=sys.stderr)
+        tqdm.write(f"  [warn] cannot open {mp4_path}")
         return False
 
-    fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total  = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps   = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     clip_start = max(0, start_frame - padding)
     clip_end   = min(total, start_frame + duration + padding)
     n_frames   = clip_end - clip_start
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+    # libx264 (via imageio-ffmpeg) instead of cv2's mp4v so clips play in Chrome.
+    writer = imageio.get_writer(
+        str(output_path), fps=fps, codec="libx264", pixelformat="yuv420p"
+    )
 
     pts, conf = None, None
     if h5_path is not None and h5_path.exists():
         try:
             pts, conf = load_pose_frames(h5_path, clip_start, clip_end)
         except Exception as exc:
-            print(f"  [warn] pose load failed ({h5_path.name}): {exc}", file=sys.stderr)
+            tqdm.write(f"  [warn] pose load failed ({h5_path.name}): {exc}")
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, clip_start)
     for local_i in range(n_frames):
@@ -199,10 +207,10 @@ def extract_clip(
             break
         if pts is not None and local_i < len(pts):
             draw_pose(frame, pts[local_i], conf[local_i])
-        writer.write(frame)
+        writer.append_data(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
     cap.release()
-    writer.release()
+    writer.close()
     return True
 
 
@@ -285,12 +293,14 @@ def main() -> None:
         sampled = sample_bouts(df, args.n_clips, seed=args.seed)
         label = df["behavior_label"].iloc[0]
         n_videos = df["video_name"].nunique()
-        print(f"\n[{label}] sampling {len(sampled)} clips across {n_videos} videos")
 
-        for i, (_, row) in enumerate(sampled.iterrows()):
+        desc = f"{label} ({n_videos} videos)"
+        for i, (_, row) in enumerate(
+            tqdm(list(sampled.iterrows()), desc=desc, unit="clip")
+        ):
             mp4_path, h5_path = video_name_to_paths(row["video_name"], args.video_dir)
-            if not mp4_path.exists():
-                print(f"  [warn] video not found: {mp4_path}", file=sys.stderr)
+            if mp4_path is None:
+                tqdm.write(f"  [warn] video not found for: {row['video_name']}")
                 continue
 
             video_id = row["video_name"].split(" ")[-1]
@@ -307,7 +317,6 @@ def main() -> None:
             )
             if ok:
                 total_clips += 1
-                print(f"  -> {output_path}")
 
     print(f"\nDone. {total_clips} clip(s) written to {args.output_dir}")
 
