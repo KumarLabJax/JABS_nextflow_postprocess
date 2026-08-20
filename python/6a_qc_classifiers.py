@@ -144,16 +144,16 @@ def load_pose_frames(h5_path: Path, frame_start: int, frame_end: int):
     return pts.astype(np.float32), conf.astype(np.float32)
 
 
-def draw_pose(frame: np.ndarray, keypoints_xy: np.ndarray, confidence: np.ndarray) -> np.ndarray:
+def draw_pose(frame: np.ndarray, keypoints_yx: np.ndarray, confidence: np.ndarray) -> np.ndarray:
     """Overlay skeleton edges and keypoint dots onto frame (in-place)."""
     for a, b in SKELETON_EDGES:
         if confidence[a] >= POSE_CONFIDENCE_THRESHOLD and confidence[b] >= POSE_CONFIDENCE_THRESHOLD:
-            p1 = (int(keypoints_xy[a, 0]), int(keypoints_xy[a, 1]))
-            p2 = (int(keypoints_xy[b, 0]), int(keypoints_xy[b, 1]))
+            p1 = (int(keypoints_yx[a, 1]), int(keypoints_yx[a, 0]))
+            p2 = (int(keypoints_yx[b, 1]), int(keypoints_yx[b, 0]))
             cv2.line(frame, p1, p2, EDGE_COLOR, 2, cv2.LINE_AA)
-    for i in range(len(keypoints_xy)):
+    for i in range(len(keypoints_yx)):
         if confidence[i] >= POSE_CONFIDENCE_THRESHOLD:
-            cx, cy = int(keypoints_xy[i, 0]), int(keypoints_xy[i, 1])
+            cy, cx = int(keypoints_yx[i, 0]), int(keypoints_yx[i, 1])
             cv2.circle(frame, (cx, cy), 4, KEYPOINT_COLOR, -1, cv2.LINE_AA)
     return frame
 
