@@ -6,8 +6,8 @@ a ``failed_corners/`` subdirectory.  A human then re-labels the four corners in
 SLEAP and saves the result as ``manual_corner_correction.slp`` alongside the
 batch.
 
-This script iterates over Nextflow batch directories, finds any
-``manual_corner_correction.slp`` file, and for each annotated video:
+This script takes a single ``manual_corner_correction.slp`` file and, for each
+annotated video:
 
 1. Copies the corresponding ``_pose_est_v6.h5`` from ``failed_corners/`` to the
    output directory (decoding URL-encoded ``%20`` spaces in filenames).
@@ -17,8 +17,11 @@ This script iterates over Nextflow batch directories, finds any
 Usage::
 
     python python/pose_corner_correction.py \\
-        --input_dir /path/to/NextflowOutput \\
+        --slp_file /path/to/batch/manual_corner_correction.slp \\
         --output_dir /path/to/pose_v6_dir
+
+By default, the failed pose files are looked up in a ``failed_corners/``
+directory next to the ``.slp`` file. Pass ``--failed_pose_dir`` to override.
 """
 
 import argparse
@@ -69,8 +72,13 @@ def main():
         description="Copy pose_v6 files and embed manually corrected corner coordinates."
     )
     parser.add_argument(
-        "--input_dir", required=True,
-        help="Nextflow output directory containing batch subdirectories."
+        "--slp_file", required=True,
+        help="Path to a manual_corner_correction.slp file."
+    )
+    parser.add_argument(
+        "--failed_pose_dir",
+        help="Directory containing the *_pose_est_v6.h5 files needing correction. "
+             "Defaults to a 'failed_corners' directory next to --slp_file."
     )
     parser.add_argument(
         "--output_dir", required=True,
@@ -78,11 +86,12 @@ def main():
     )
     args = parser.parse_args()
 
-    for batch_dir in Path(args.input_dir).iterdir():
-        slp_correction = batch_dir / "manual_corner_correction.slp"
-        failed_pose_dir = batch_dir / "failed_corners"
-        if slp_correction.exists():
-            create_pose_v6(slp_correction, failed_pose_dir, args.output_dir)
+    slp_correction = Path(args.slp_file)
+    failed_pose_dir = (
+        Path(args.failed_pose_dir) if args.failed_pose_dir
+        else slp_correction.parent / "failed_corners"
+    )
+    create_pose_v6(slp_correction, failed_pose_dir, args.output_dir)
 
 
 if __name__ == "__main__":

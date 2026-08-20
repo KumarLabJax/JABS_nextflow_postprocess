@@ -6,14 +6,18 @@ Usage examples:
   # Single behavior, no pose:
   python script/qc_classifiers.py \
     --behavior-csv NextflowOutput/batch_aa/merged_behavior_tables/merged_escape_bouts_merged.csv \
-    --video-dir NextflowOutput/batch_aa/results/nguyetu/KOMP_videos_batch2/ \
+    --video-dir NextflowOutput/batch_aa/results/ \
     --output-dir /tmp/qc_clips/ --n-clips 3
 
   # All behaviors in a folder, with pose skeleton:
   python script/qc_classifiers.py \
     --behavior-dir NextflowOutput/batch_aa/merged_behavior_tables/ \
-    --video-dir NextflowOutput/batch_aa/results/nguyetu/KOMP_videos_batch2/ \
+    --video-dir NextflowOutput/batch_aa/results/ \
     --output-dir /tmp/qc_clips/ --n-clips 5 --overlay-pose
+
+--video-dir must be the 'results' directory containing one namespace/
+batch_folder subdirectory per video (e.g. results/videos/batch_1/videos.mp4),
+matching the '{namespace} {batch_folder} {video_id}' prefix on video_name.
 """
 
 import argparse
@@ -96,18 +100,14 @@ def _ids_match(video_id: str, stem: str) -> bool:
 def video_name_to_paths(video_name: str, video_dir: Path) -> tuple[Path | None, Path | None]:
     """Return (mp4_path, h5_path) for a decoded video_name string.
 
-    video_name may carry a '{namespace} {batch_folder} {video_id}' prefix; only
-    the final token identifies the video. Rather than assuming a fixed suffix
-    (e.g. '_filtered') or directory layout (namespace/batch subfolders), this
-    searches video_dir recursively for an MP4/H5 whose stem is video_id up to
-    an added or removed suffix, so it isn't tied to one dataset's naming
-    convention or pose model version.
+    video_name carries a '{namespace} {batch_folder} {video_id}' prefix.
     """
-    video_id = video_name.split(" ")[-1]
+    namespace, batch_folder, video_id = video_name.split(" ", 2)
+    search_dir = video_dir / namespace / batch_folder
 
-    mp4 = next((p for p in video_dir.rglob("*.mp4") if _ids_match(video_id, p.stem)), None)
+    mp4 = next((p for p in search_dir.rglob("*.mp4") if _ids_match(video_id, p.stem)), None)
 
-    search_root = mp4.parent if mp4 is not None else video_dir
+    search_root = mp4.parent if mp4 is not None else search_dir
     h5 = next((p for p in search_root.rglob("*.h5") if _ids_match(video_id, p.stem)), None)
 
     return mp4, h5
@@ -240,7 +240,9 @@ def main() -> None:
         type=Path,
         required=True,
         metavar="DIR",
-        help="Directory containing MP4 (and H5 pose) files",
+        help="'results' directory holding namespace/batch_folder subdirectories of "
+             "MP4 (and H5 pose) files, matching the '{namespace} {batch_folder} "
+             "{video_id}' prefix on video_name",
     )
     parser.add_argument(
         "--output-dir",
