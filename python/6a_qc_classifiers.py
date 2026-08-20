@@ -100,15 +100,21 @@ def _ids_match(video_id: str, stem: str) -> bool:
 def video_name_to_paths(video_name: str, video_dir: Path) -> tuple[Path | None, Path | None]:
     """Return (mp4_path, h5_path) for a decoded video_name string.
 
-    video_name carries a '{namespace} {batch_folder} {video_id}' prefix.
+    video_name carries a '{namespace} {batch_folder} {video_id}' prefix. Tries an
+    exact-filename path first (a single stat call, no directory walk), and only
+    falls back to a recursive fuzzy-id search if that miss.
     """
     namespace, batch_folder, video_id = video_name.split(" ", 2)
     search_dir = video_dir / namespace / batch_folder
 
-    mp4 = next((p for p in search_dir.rglob("*.mp4") if _ids_match(video_id, p.stem)), None)
+    mp4 = search_dir / f"{video_id}.mp4"
+    if not mp4.exists():
+        mp4 = next((p for p in search_dir.rglob("*.mp4") if _ids_match(video_id, p.stem)), None)
 
     search_root = mp4.parent if mp4 is not None else search_dir
-    h5 = next((p for p in search_root.rglob("*.h5") if _ids_match(video_id, p.stem)), None)
+    h5 = search_root / f"{video_id}.h5"
+    if not h5.exists():
+        h5 = next((p for p in search_root.rglob("*.h5") if _ids_match(video_id, p.stem)), None)
 
     return mp4, h5
 
