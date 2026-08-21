@@ -30,13 +30,16 @@ _CLIP_RE = re.compile(r"(.+)_bout(\d+)_frame(\d+)\.mp4$")
 def scan_clips(clips_dir: Path) -> list[dict]:
     clips = []
     for mp4 in sorted(clips_dir.rglob("*.mp4")):
-        behavior = mp4.relative_to(clips_dir).parts[0]
+        rel_parts = mp4.relative_to(clips_dir).parts
+        behavior = rel_parts[0]
+        subdir = "/".join(rel_parts[1:-1])
         m = _CLIP_RE.match(mp4.name)
         if not m:
             continue
         clips.append({
             "path": str(mp4),
             "behavior": behavior,
+            "subdir": subdir,
             "video_id": m.group(1),
             "bout_idx": int(m.group(2)),
             "frame_start": int(m.group(3)),
@@ -85,22 +88,35 @@ def main():
         st.stop()
 
     behaviors = sorted({c["behavior"] for c in clips})
+    subdirs = sorted({c["subdir"] for c in clips if c["subdir"]})
 
     # ------------------------------------------------------------------ Sidebar
     with st.sidebar:
         st.title("Behavior QC")
 
         selected_behavior = st.selectbox("Behavior filter", ["All"] + behaviors, key="filter")
+        selected_subdir = (
+            st.selectbox("Directory filter", ["All"] + subdirs, key="subdir_filter")
+            if subdirs else "All"
+        )
 
-        # Reset position when filter changes
-        if st.session_state.get("_last_filter") != selected_behavior:
+        search_keyword = st.text_input(
+            "Search video/mouse ID (contains)", key="search_keyword"
+        ).strip().lower()
+
+        # Reset position when any filter changes
+        filter_state = (selected_behavior, selected_subdir, search_keyword)
+        if st.session_state.get("_last_filter") != filter_state:
             st.session_state.idx = 0
-            st.session_state["_last_filter"] = selected_behavior
+            st.session_state["_last_filter"] = filter_state
 
         filtered = [
             c for c in clips
-            if selected_behavior == "All" or c["behavior"] == selected_behavior
+            if (selected_behavior == "All" or c["behavior"] == selected_behavior)
+            and (selected_subdir == "All" or c["subdir"] == selected_subdir)
+            and (not search_keyword or search_keyword in c["video_id"].lower())
         ]
+
         n_total = len(filtered)
         n_annotated = sum(
             1 for c in filtered if c["path"] in st.session_state.annotations
@@ -125,6 +141,20 @@ def main():
 
         st.caption(f"`{args.annotations_csv}`")
 
+        st.divider()
+
+        # First clip index (within `filtered`) for each distinct video, in order
+        first_idx_for_video = {}
+        for i, c in enumerate(filtered):
+            first_idx_for_video.setdefault(c["video_id"], i)
+
+        with st.expander(f"All videos ({len(first_idx_for_video)})"):
+            with st.container(height=300):
+                for vid, first_i in first_idx_for_video.items():
+                    if st.button(vid, key=f"jump_{vid}", use_container_width=True):
+                        st.session_state.idx = first_i
+                        st.rerun()
+
     # ------------------------------------------------------------------ Guard
     if not filtered:
         st.warning("No clips match the current filter.")
@@ -135,8 +165,9 @@ def main():
     ann = st.session_state.annotations.get(clip["path"], {"status": "", "notes": ""})
 
     # ------------------------------------------------------------------ Header
+    location = f"{clip['behavior']}/{clip['subdir']}" if clip["subdir"] else clip["behavior"]
     st.markdown(
-        f"**Clip {st.session_state.idx + 1} of {n_total}** &nbsp;|&nbsp; `{clip['behavior']}`"
+        f"**Clip {st.session_state.idx + 1} of {n_total}** &nbsp;|&nbsp; `{location}`"
     )
 
     # Show current verdict badge if already annotated
@@ -151,14 +182,18 @@ def main():
     st.video(clip["path"], loop=True, autoplay=True)
 
     # ------------------------------------------------------------------ Metadata
-    c1, c2, c3, c4 = st.columns(4)
     vid_label = clip["video_id"]
     if len(vid_label) > 24:
         vid_label = vid_label[:21] + "…"
+
+    c1, c2, c3 = st.columns(3)
     c1.metric("Behavior", clip["behavior"])
-    c2.metric("Video ID", vid_label)
-    c3.metric("Bout #", clip["bout_idx"])
-    c4.metric("Start frame", clip["frame_start"])
+    c2.metric("Bout #", clip["bout_idx"])
+    c3.metric("Start frame", clip["frame_start"])
+
+    c4, c5 = st.columns(2)
+    c4.metric("Directory", clip["subdir"] or "—")
+    c5.metric("Video ID", vid_label)
 
     st.divider()
 
