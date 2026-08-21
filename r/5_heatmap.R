@@ -25,7 +25,7 @@ options(error = NULL)
 #working.directory <- "C:\\Users\\beierj\\Desktop\\2025-04-09_NTG_C1-C5_Analysis\\"
 
 ##Metadata for partial and regular correlations
-metadata.to.retain <- c("sex", "test_date", "gx")
+metadata.to.retain <- c("sex", "day", "tx")
 
 
 #Create functions--------------------------------------------------------------
@@ -70,7 +70,7 @@ rm_df_to_cor_output_list <- function(df, rm, corr_var){
   output <- NULL
   
   #Create a list of unique values for repeated measure
-  repeated.measure <- sort(unique(df[[rm]]))
+  repeated.measure <- sort(unique(df[,rm]))
   
   #Ensure the cols are ordered the way you'd like below
   df <- cbind(df[c(rm, corr_var)],
@@ -113,7 +113,11 @@ rm_df_to_cor_output_list <- function(df, rm, corr_var){
     
   }
   
-
+  output |> 
+    group_by(day) |> 
+    summarize(
+      count = n()
+    )
   
   output <- list(r = output[c("measure", "r", paste(rm))], pval = output[c("measure", "pval", paste(rm))] )
   
@@ -147,13 +151,11 @@ rm_df_to_cor_output_list <- function(df, rm, corr_var){
   output
 }
 
-
-
 rm_df_to_pcor_output_list <- function(df, rm, corr_var, cont_var){
   output <- NULL
   
   #Create a list of unique values for repeated measure
-  repeated.measure <- sort(unique(df[[rm]]))
+  repeated.measure <- sort(unique(df[,rm]))
   
   #Ensure the cols are ordered the way you'd like below
   df <- cbind(df[c(rm, corr_var, cont_var)],
@@ -328,20 +330,19 @@ data.nextflow.m <- subset(data.nextflow, sex == 1) |>
 
 
 #----Loop for heatmaps----
-pcorr.all.tx <- rm_df_to_pcor_output_list(data.nextflow, "test_date", "gx", "sex")
+corr.all.tx <- rm_df_to_pcor_output_list(data.nextflow, "day", "tx", "sex")
 
-
-corr.all.tx <- rm_df_to_cor_output_list(data.nextflow[-2], "test_date", "gx")
+corr.all.tx.f <- rm_df_to_cor_output_list(data.nextflow.f, "day", "tx")
 
 
 #Make some heatmaps-----
-ht.all.corr.05.noadj <- plot_heatmap(corr.all.tx, 0.05, adjusted = TRUE,
-                                     min_sig=1, min_sig_exclude_row_1 = FALSE, col_titles = "Day",
-                                     height = 40, width = 1.5)
+ht.all.corr.05.noadj <- plot_heatmap(corr.all.tx, 0.05, adjusted = FALSE,
+                                     min_sig=2, min_sig_exclude_row_1 = TRUE, col_titles = "Day",
+                                     height = 7.5, width = 20)
 
-pdf(file="test3.pdf", width = 7.5, height = 40)
+pdf(file="exploratory_figs/Heatmaps/test.pdf", width = 7.5, height = 12.5)
 #png(file="exploratory_figs/Heatmaps/All_mice_tx_corr_05_pval.png", width = 17.5, height = 30, units= "cm", res = 600)
-draw(ht.all.corr.05.noadj, column_title = "NTG:Behavior Correlation, all mice", column_title_gp = gpar(fontsize = 25))
+draw(test, column_title = "NTG:Behavior Correlation, all mice", column_title_gp = gpar(fontsize = 25))
 dev.off()
 
 
