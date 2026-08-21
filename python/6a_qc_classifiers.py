@@ -75,6 +75,7 @@ def parse_behavior_csv(csv_path: Path) -> pd.DataFrame:
     df = df[df["is_behavior"] == 1].copy()
     df["video_name"] = df["video_name"].apply(unquote)
     df["behavior_label"] = _label_from_filename(csv_path.name)
+    df["bout_order"] = df.sort_values(["video_name", "start"]).groupby("video_name").cumcount()
     return df
 
 
@@ -303,17 +304,15 @@ def main() -> None:
         n_videos = df["video_name"].nunique()
 
         desc = f"{label} ({n_videos} videos)"
-        for i, (_, row) in enumerate(
-            tqdm(list(sampled.iterrows()), desc=desc, unit="clip")
-        ):
+        for _, row in tqdm(list(sampled.iterrows()), desc=desc, unit="clip"):
             mp4_path, h5_path = video_name_to_paths(row["video_name"], args.video_dir)
             if mp4_path is None:
                 tqdm.write(f"  [warn] video not found for: {row['video_name']}")
                 continue
 
-            video_id = row["video_name"].split(" ")[-1]
-            out_name = f"{video_id}_bout{i:03d}_frame{int(row['start'])}.mp4"
-            output_path = args.output_dir / label / out_name
+            namespace, batch_folder, video_id = row["video_name"].split(" ", 2)
+            out_name = f"{video_id}_bout{row['bout_order']:03d}_frame{int(row['start'])}.mp4"
+            output_path = args.output_dir / label / namespace / batch_folder / out_name
 
             ok = extract_clip(
                 mp4_path=mp4_path,

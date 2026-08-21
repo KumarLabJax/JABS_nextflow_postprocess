@@ -30,7 +30,7 @@ _CLIP_RE = re.compile(r"(.+)_bout(\d+)_frame(\d+)\.mp4$")
 def scan_clips(clips_dir: Path) -> list[dict]:
     clips = []
     for mp4 in sorted(clips_dir.rglob("*.mp4")):
-        behavior = mp4.parent.name
+        behavior = mp4.relative_to(clips_dir).parts[0]
         m = _CLIP_RE.match(mp4.name)
         if not m:
             continue
