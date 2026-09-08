@@ -15,7 +15,7 @@ import cv2
 import h5py
 import numpy as np
 
-H5_SUFFIX = "_pose_est_v6.h5"
+H5_SUFFIX = "_filtered_pose_est_v6.h5"
 LABEL_BAR_HEIGHT = 30
 
 PANEL_LABEL_COLOR = (255, 255, 255)
@@ -30,10 +30,10 @@ BOLI_POINT_COLOR = (0, 140, 255)
 NO_CORNERS_COLOR = (0, 0, 0)
 
 
-def find_video_for_h5(h5_path: Path) -> Optional[Path]:
+def find_video_for_h5(h5_path: Path, h5_suffix: str) -> Optional[Path]:
     """Return the video path corresponding to a pose H5 file, if it exists."""
     video_path = h5_path.with_name(
-        h5_path.name.removesuffix(H5_SUFFIX) + ".mp4"
+        h5_path.name.removesuffix(h5_suffix) + ".mp4"
     )
     return video_path if video_path.exists() else None
 
@@ -170,8 +170,8 @@ def format_timestamp(frame_idx: int, fps: float) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def process_one(h5_path: Path, output_dir: Path) -> bool:
-    video_path = find_video_for_h5(h5_path)
+def process_one(h5_path: Path, h5_suffix: str, output_dir: Path) -> bool:
+    video_path = find_video_for_h5(h5_path, h5_suffix)
     if video_path is None:
         print(f"[skip] no video next to {h5_path}")
         return False
@@ -247,9 +247,13 @@ def main() -> None:
         help="Directory to write collage PNGs into.",
     )
     parser.add_argument(
-        "--pattern",
-        default=f"*{H5_SUFFIX}",
-        help=f"Glob pattern for directory mode (default: *{H5_SUFFIX})",
+        "--suffix",
+        default=H5_SUFFIX,
+        help=(
+            "Pose H5 filename suffix, used to find matching H5 files in "
+            f"--directory mode and to locate the video for --file "
+            f"(default: {H5_SUFFIX})"
+        ),
     )
 
     args = parser.parse_args()
@@ -260,7 +264,7 @@ def main() -> None:
     else:
         h5_paths = sorted(
             path
-            for path in args.directory.rglob(args.pattern)
+            for path in args.directory.rglob(f"*{args.suffix}")
         )
 
     if not h5_paths:
@@ -268,7 +272,7 @@ def main() -> None:
 
     ok_count = 0
     for h5_path in h5_paths:
-        if process_one(h5_path, args.output_dir):
+        if process_one(h5_path, args.suffix, args.output_dir):
             ok_count += 1
 
     print(
