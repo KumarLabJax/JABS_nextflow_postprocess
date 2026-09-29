@@ -35,7 +35,7 @@ def parse_arguments():
     
     # QC parameters with defaults
     parser.add_argument("--expected_length", type=int, default=60*60*30 + 5*30,
-                        help="Expected video length in seconds [default: 108300]")
+                        help="Expected video length in seconds [default: 108150]")
     parser.add_argument("--max_tracklet_per_hour", type=int, default=6,
                         help="Maximum tracklets per hour [default: 6]")
     parser.add_argument("--max_missing_pose", type=float, default=0.005,

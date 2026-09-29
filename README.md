@@ -212,14 +212,14 @@ Samples random video clips at detected behavior bouts, with optional pose skelet
 # Single behavior, no pose overlay:
 python python/6a_qc_classifiers.py \
     --behavior-csv NextflowOutput/batch_aa/merged_behavior_tables/merged_escape_bouts_merged.csv \
-    --video-dir NextflowOutput/batch_aa/results/videos/ \
+    --video-dir NextflowOutput/batch_aa/results/ \
     --output-dir /tmp/qc_clips/ \
     --n-clips 3
 
 # All behaviors in a folder, with pose skeleton:
 python python/6a_qc_classifiers.py \
     --behavior-dir NextflowOutput/batch_aa/merged_behavior_tables/ \
-    --video-dir NextflowOutput/batch_aa/results/videos/ \
+    --video-dir NextflowOutput/batch_aa/results/ \
     --output-dir /tmp/qc_clips/ \
     --n-clips 5 --overlay-pose
 ```
@@ -240,17 +240,29 @@ streamlit run python/6b_qc_viewer.py -- \
 
 ### Utility — Pose Corner Correction · `python/pose_corner_correction.py`
 
-Copies `pose_est_v6.h5` files and embeds manually corrected corner coordinates from SLEAP annotation files.
+When automated arena-corner detection fails, a human re-labels the four corners
+in SLEAP and saves the result as `manual_corner_correction.slp`. This script
+takes that single `.slp` file and, for each annotated video, copies the
+corresponding `*_pose_est_v6.h5` from `failed_corners/` to the output directory
+and overwrites its `static_objects/corners` dataset with the corrected
+coordinates.
 
 ```bash
 python python/pose_corner_correction.py \
-    --input_dir /path/to/NextflowOutput \
-    --output_dir /path/to/pose_v6_dir
+    --slp_file /path/to/batch/manual_corner_correction.slp \
+    --failed_pose_dir /path/to/batch/failed_corners \
+    --output_dir /path/to/batch/results
 ```
 
-Expects each batch subdirectory to optionally contain:
-- `manual_corner_correction.slp` — SLEAP file with corrected corners
-- `failed_corners/` — `*_pose_est_v6.h5` files to update
+- `--slp_file` (required) — a single `manual_corner_correction.slp` file, with one labelled frame per failed video.
+- `--failed_pose_dir` (optional) — directory containing the `*_pose_est_v6.h5` files to update. Defaults to a `failed_corners/` directory next to `--slp_file`.
+- `--output_dir` (optional) — destination for the corrected pose files. Defaults to a `results/` directory next to `--slp_file`.
+
+Video filenames with `%20` in place of `/` are decoded back into nested
+subdirectories under `--output_dir`, preserving the original batch folder
+structure. Progress and any missing source files are printed to the console.
+
+Run once per `.slp` file (i.e. once per batch).
 
 ---
 

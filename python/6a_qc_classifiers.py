@@ -23,6 +23,7 @@ matching the '{namespace} {batch_folder} {video_id}' prefix on video_name.
 import argparse
 import re
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -283,6 +284,13 @@ def main() -> None:
         default=42,
         help="Random seed for reproducible sampling (default: 42)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Parallel clip-extraction workers (default: 1)",
+    )
     args = parser.parse_args()
 
     if args.behavior_csv:
@@ -293,37 +301,47 @@ def main() -> None:
             sys.exit(f"No merged_*_bouts_merged.csv files found in {args.behavior_dir}")
 
     total_clips = 0
-    for csv_path in csv_paths:
-        df = parse_behavior_csv(csv_path)
-        if df.empty:
-            print(f"[skip] {csv_path.name} — no positive bouts")
-            continue
-
-        sampled = sample_bouts(df, args.n_clips, seed=args.seed)
-        label = df["behavior_label"].iloc[0]
-        n_videos = df["video_name"].nunique()
-
-        desc = f"{label} ({n_videos} videos)"
-        for _, row in tqdm(list(sampled.iterrows()), desc=desc, unit="clip"):
-            mp4_path, h5_path = video_name_to_paths(row["video_name"], args.video_dir)
-            if mp4_path is None:
-                tqdm.write(f"  [warn] video not found for: {row['video_name']}")
+    with ProcessPoolExecutor(max_workers=args.workers) as executor:
+        for csv_path in csv_paths:
+            df = parse_behavior_csv(csv_path)
+            if df.empty:
+                print(f"[skip] {csv_path.name} — no positive bouts")
                 continue
 
-            namespace, batch_folder, video_id = row["video_name"].split(" ", 2)
-            out_name = f"{video_id}_bout{row['bout_order']:03d}_frame{int(row['start'])}.mp4"
-            output_path = args.output_dir / label / namespace / batch_folder / out_name
+            sampled = sample_bouts(df, args.n_clips, seed=args.seed)
+            label = df["behavior_label"].iloc[0]
+            n_videos = df["video_name"].nunique()
 
-            ok = extract_clip(
-                mp4_path=mp4_path,
-                start_frame=int(row["start"]),
-                duration=int(row["duration"]),
-                padding=args.padding,
-                output_path=output_path,
-                h5_path=h5_path if args.overlay_pose else None,
-            )
-            if ok:
-                total_clips += 1
+            futures = []
+            for _, row in sampled.iterrows():
+                mp4_path, h5_path = video_name_to_paths(row["video_name"], args.video_dir)
+                if mp4_path is None:
+                    tqdm.write(f"  [warn] video not found for: {row['video_name']}")
+                    continue
+
+                namespace, batch_folder, video_id = row["video_name"].split(" ", 2)
+                out_name = f"{video_id}_bout{row['bout_order']:03d}_frame{int(row['start'])}.mp4"
+                output_path = args.output_dir / label / namespace / batch_folder / out_name
+
+                futures.append(executor.submit(
+                    extract_clip,
+                    mp4_path,
+                    int(row["start"]),
+                    int(row["duration"]),
+                    args.padding,
+                    output_path,
+                    h5_path if args.overlay_pose else None,
+                ))
+
+            desc = f"{label} ({n_videos} videos)"
+            for fut in tqdm(as_completed(futures), total=len(futures), desc=desc, unit="clip"):
+                try:
+                    ok = fut.result()
+                except Exception as exc:
+                    tqdm.write(f"  [warn] clip extraction failed: {exc}")
+                    continue
+                if ok:
+                    total_clips += 1
 
     print(f"\nDone. {total_clips} clip(s) written to {args.output_dir}")
 
